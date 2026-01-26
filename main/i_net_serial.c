@@ -158,12 +158,15 @@ esp_err_t serial_net_handshake(int timeout_ms)
     
     ESP_LOGI(SERIAL_TAG, "Starting handshake (timeout: %dms)...", timeout_ms);
     
+    // Flush any stale data from UART buffer
+    uart_flush(UART_PORT);
+    
     uint8_t tx_byte = is_master ? SERIAL_HANDSHAKE_M : SERIAL_HANDSHAKE_S;
     uint8_t expect_byte = is_master ? SERIAL_HANDSHAKE_S : SERIAL_HANDSHAKE_M;
     uint8_t rx_byte;
     
     int elapsed = 0;
-    const int interval = 100;  // Send every 100ms
+    const int interval = 200;  // Increased to 200ms for better synchronization window
     
     while (elapsed < timeout_ms) {
         // Send our handshake byte
@@ -1471,7 +1474,9 @@ esp_err_t Serial_CheckLevelMismatch(int current_episode, int current_map,
     serial_net_receive(pkt, sizeof(pkt), &len);
     
     // Check if we have a valid target level that differs from current
-    if (mismatch_target_episode > 0 && mismatch_target_map > 0) {
+    // Only trigger mismatch if slave already has a loaded level (episode/map > 0)
+    // This prevents false triggers during initial attachment when slave's level is not yet set
+    if (mismatch_target_episode > 0 && mismatch_target_map > 0 && current_episode > 0 && current_map > 0) {
         if (mismatch_target_episode != current_episode || mismatch_target_map != current_map) {
             printf("LEVEL MISMATCH CHECK: Master is on E%dM%d, Slave is on E%dM%d\n",
                    mismatch_target_episode, mismatch_target_map, current_episode, current_map);
