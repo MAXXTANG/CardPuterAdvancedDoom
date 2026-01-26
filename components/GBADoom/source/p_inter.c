@@ -620,11 +620,14 @@ static void P_KillMobj(mobj_t *source, mobj_t *target)
 
   if (P_MobjIsPlayer(target))
     {
+      // Get the actual player who died (not necessarily consoleplayer in multiplayer!)
+      player_t *deadplayer = P_MobjIsPlayer(target);
       target->flags &= ~MF_SOLID;
-      _g->players[_g->consoleplayer].playerstate = PST_DEAD;
-      P_DropWeapon (&_g->players[_g->consoleplayer]);
+      deadplayer->playerstate = PST_DEAD;
+      P_DropWeapon(deadplayer);
 
-      if (_g->automapmode & am_active)
+      // Only stop automap if it's the local player who died
+      if (deadplayer == &_g->players[_g->consoleplayer] && (_g->automapmode & am_active))
         AM_Stop();    // don't die in auto map; switch view prior to dying
     }
 
