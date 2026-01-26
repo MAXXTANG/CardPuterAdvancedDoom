@@ -134,8 +134,10 @@ esp_err_t serial_net_handshake(int timeout_ms)
         return ESP_FAIL;
     }
     ESP_LOGI(SERIAL_TAG, "Starting handshake (timeout: %dms)...", timeout_ms);
-    // Flush any stale data from UART buffer
+    
+    // Quick flush of UART buffers (no extended drain - that was causing timing issues)
     uart_flush(UART_PORT);
+    
     uint8_t tx_byte = is_master ? SERIAL_HANDSHAKE_M : SERIAL_HANDSHAKE_S;
     uint8_t expect_byte = is_master ? SERIAL_HANDSHAKE_S : SERIAL_HANDSHAKE_M;
     uint8_t rx_byte;
@@ -147,16 +149,27 @@ esp_err_t serial_net_handshake(int timeout_ms)
         // Check for response
         int len = uart_read_bytes(UART_PORT, &rx_byte, 1, pdMS_TO_TICKS(interval));
         if (len > 0) {
-            ESP_LOGI(SERIAL_TAG, "Received byte: 0x%02X (expecting 0x%02X)", rx_byte, expect_byte);
+            // Only log occasionally to avoid spam
+            static int log_counter = 0;
+            if (++log_counter % 10 == 1) {
+                ESP_LOGI(SERIAL_TAG, "Received byte: 0x%02X (expecting 0x%02X)", rx_byte, expect_byte);
+            }
             if (rx_byte == expect_byte) {
                 // Got the expected handshake!
-                if (is_master) {
-                    // Master received 0xA5 from slave - we're synced!
-                    ESP_LOGI(SERIAL_TAG, "HANDSHAKE SUCCESS (Master got slave ack)");
-                } else {
-                    // Slave received 0x5A from master, we already sent 0xA5
-                    // Send one more 0xA5 to confirm
+                ESP_LOGI(SERIAL_TAG, "HANDSHAKE: Received expected byte 0x%02X!", rx_byte);
+                
+                // CRITICAL: Continue sending our byte for 300ms to ensure remote also receives ours
+                // This prevents the race where we exit but remote is still waiting
+                ESP_LOGI(SERIAL_TAG, "HANDSHAKE: Sending confirmation for 300ms...");
+                int64_t confirm_start = esp_timer_get_time();
+                while ((esp_timer_get_time() - confirm_start) < 300000) { // 300ms
                     uart_write_bytes(UART_PORT, (const char*)&tx_byte, 1);
+                    vTaskDelay(pdMS_TO_TICKS(10));
+                }
+                
+                if (is_master) {
+                    ESP_LOGI(SERIAL_TAG, "HANDSHAKE SUCCESS (Master synced with slave)");
+                } else {
                     ESP_LOGI(SERIAL_TAG, "HANDSHAKE SUCCESS (Slave synced with master)");
                 }
                 handshake_complete = true;
@@ -165,20 +178,26 @@ esp_err_t serial_net_handshake(int timeout_ms)
                 Serial_FlushBuffers();
                 
                 // Additional safety: Wait for any lingering transmission to complete
-                uart_wait_tx_done(UART_PORT, pdMS_TO_TICKS(50));
+                uart_wait_tx_done(UART_PORT, pdMS_TO_TICKS(100));
                 
                 // Final flush to clear any last bytes
                 uart_flush(UART_PORT);
                 
-                // Drain any leftover bytes from UART (slave's extra confirmation, etc.)
+                // Drain any stray bytes that may have been sent during handshake
                 uint8_t dummy;
                 int64_t drain_start = esp_timer_get_time();
-                while (esp_timer_get_time() - drain_start < 200000) { // 200ms for extra safety
+                while (esp_timer_get_time() - drain_start < 100000) { // 100ms
                     if (uart_read_bytes(UART_PORT, &dummy, 1, 0) > 0) {
                         printf("HANDSHAKE: Drained stray byte: 0x%02X\n", dummy);
                     }
                     vTaskDelay(pdMS_TO_TICKS(1));
                 }
+                
+                // Reset frame parser state again (in case stray bytes corrupted it)
+                frame_state = FRAME_WAIT_SYNC;
+                rx_head = 0;
+                rx_tail = 0;
+                memset(rx_ring_buffer, 0, sizeof(rx_ring_buffer));
                 
                 printf("HANDSHAKE SUCCESS: Buffers cleared, ready for framed packets\n");
                 return ESP_OK;
@@ -1335,4 +1354,216 @@ esp_err_t Serial_CheckSlaveLevel(int *out_episode, int *out_map)
         return ESP_OK;
     }
     return ESP_ERR_NOT_FOUND;
+}
+// ============================================================================
+// Automated Deterministic Role Negotiation
+// ============================================================================
+#include "esp_mac.h"
+#include "time.h"
+#include "sys/time.h"
+
+// MAC comparison function (treats 6-byte MAC as big-endian 48-bit integer)
+int mac_compare(const uint8_t *mac1, const uint8_t *mac2) {
+    for (int i = 0; i < 6; i++) {
+        if (mac1[i] != mac2[i]) {
+            return mac1[i] - mac2[i];
+        }
+    }
+    return 0;
+}
+
+// Helper to initialize UART with given configuration (true for master pinout, false for slave)
+static esp_err_t neg_uart_init(bool is_master_config) {
+    uart_config_t uart_config = {
+        .baud_rate = BAUD_RATE,
+        .data_bits = UART_DATA_8_BITS,
+        .parity = UART_PARITY_DISABLE,
+        .stop_bits = UART_STOP_BITS_1,
+        .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
+        .source_clk = UART_SCLK_DEFAULT,
+    };
+    
+    esp_err_t ret = uart_driver_install(UART_PORT, SERIAL_RX_BUFFER, 256, 0, NULL, 0);
+    if (ret != ESP_OK) {
+        ESP_LOGE(SERIAL_TAG, "Negotiation: uart_driver_install failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+    ret = uart_param_config(UART_PORT, &uart_config);
+    if (ret != ESP_OK) {
+        ESP_LOGE(SERIAL_TAG, "Negotiation: uart_param_config failed: %s", esp_err_to_name(ret));
+        uart_driver_delete(UART_PORT);
+        return ret;
+    }
+    
+    int tx_pin, rx_pin;
+    if (is_master_config) {
+        // Master: TX=G1, RX=G2
+        tx_pin = GROVE_G1;
+        rx_pin = GROVE_G2;
+    } else {
+        // Slave: TX=G2, RX=G1 (crossed)
+        tx_pin = GROVE_G2;
+        rx_pin = GROVE_G1;
+    }
+    
+    ret = uart_set_pin(UART_PORT, tx_pin, rx_pin, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
+    if (ret != ESP_OK) {
+        ESP_LOGE(SERIAL_TAG, "Negotiation: uart_set_pin failed: %s", esp_err_to_name(ret));
+        uart_driver_delete(UART_PORT);
+        return ret;
+    }
+    uart_flush(UART_PORT);
+    return ESP_OK;
+}
+
+esp_err_t serial_net_auto_negotiate(const uint8_t *local_mac, uint8_t local_day, 
+                                     uint8_t *remote_mac, uint8_t *remote_day, 
+                                     int *result_is_master, int timeout_ms) {
+    // ROBUST NEGOTIATION: Each device alternates pin configs within the same time window
+    // This guarantees that at some point both devices have opposite configs and can communicate
+    
+    ESP_LOGI(SERIAL_TAG, "Negotiation: MAC=%02X:%02X:%02X:%02X:%02X:%02X, timeout=%dms",
+             local_mac[0], local_mac[1], local_mac[2], local_mac[3], local_mac[4], local_mac[5], timeout_ms);
+    
+    // Packet format for negotiation: [SYNC 0xAA][MAC 6 bytes][Day 1 byte][Checksum 1 byte]
+    const uint8_t NEGOTIATION_SYNC = 0xAA;
+    uint8_t tx_packet[9];
+    uint8_t rx_packet[9];
+    
+    tx_packet[0] = NEGOTIATION_SYNC;
+    memcpy(&tx_packet[1], local_mac, 6);
+    tx_packet[7] = local_day;
+    tx_packet[8] = calculate_checksum(&tx_packet[1], 7);  // Checksum of MAC+day
+    
+    bool received_remote = false;
+    int64_t start_time = esp_timer_get_time();
+    int64_t timeout_us = (int64_t)timeout_ms * 1000;
+    
+    // Determine starting config based on MAC LSB - doesn't matter which, we'll alternate anyway
+    bool is_master_config = (local_mac[5] & 0x01) ? true : false;
+    
+    // Main negotiation loop - run until timeout or success
+    while (!received_remote && (esp_timer_get_time() - start_time) < timeout_us) {
+        // Initialize UART with current config
+        esp_err_t ret = neg_uart_init(is_master_config);
+        if (ret != ESP_OK) {
+            ESP_LOGW(SERIAL_TAG, "UART init failed, will retry with other config");
+            is_master_config = !is_master_config;
+            vTaskDelay(pdMS_TO_TICKS(50));
+            continue;
+        }
+        
+        ESP_LOGI(SERIAL_TAG, "Negotiation: Trying config=%s", is_master_config ? "MASTER_PINS" : "SLAVE_PINS");
+        
+        // Try this config for 200ms (send packets and listen)
+        int64_t config_start = esp_timer_get_time();
+        int64_t config_timeout_us = 200000; // 200ms per config
+        
+        while ((esp_timer_get_time() - config_start) < config_timeout_us) {
+            // Send our packet
+            uart_write_bytes(UART_PORT, (const char*)tx_packet, sizeof(tx_packet));
+            uart_wait_tx_done(UART_PORT, pdMS_TO_TICKS(10));
+            
+            // Listen for 30ms
+            int64_t listen_start = esp_timer_get_time();
+            while ((esp_timer_get_time() - listen_start) < 30000) {
+                size_t available = 0;
+                uart_get_buffered_data_len(UART_PORT, &available);
+                
+                // Try to read any available bytes (even partial packets)
+                if (available > 0) {
+                    int len = uart_read_bytes(UART_PORT, rx_packet, sizeof(rx_packet), pdMS_TO_TICKS(10));
+                    if (len == sizeof(rx_packet)) {
+                        if (rx_packet[0] == NEGOTIATION_SYNC) {
+                            uint8_t expected_checksum = calculate_checksum(&rx_packet[1], 7);
+                            if (rx_packet[8] == expected_checksum) {
+                                // Check if this is our own packet (MAC matches)
+                                if (memcmp(&rx_packet[1], local_mac, 6) == 0) {
+                                    // It's our own echo (shouldn't happen with proper wiring)
+                                    ESP_LOGW(SERIAL_TAG, "Received own echo - cable may be misconfigured");
+                                    continue;
+                                }
+                                // Valid remote packet!
+                                memcpy(remote_mac, &rx_packet[1], 6);
+                                *remote_day = rx_packet[7];
+                                received_remote = true;
+                                ESP_LOGI(SERIAL_TAG, "Received valid packet from remote MAC: %02X:%02X:%02X:%02X:%02X:%02X",
+                                        remote_mac[0], remote_mac[1], remote_mac[2], remote_mac[3], remote_mac[4], remote_mac[5]);
+                                
+                                // CRITICAL: Continue sending our packet for 500ms to ensure remote also receives ours
+                                // This prevents the race condition where we exit but remote is still waiting
+                                ESP_LOGI(SERIAL_TAG, "Sending confirmation packets for 500ms...");
+                                int64_t confirm_start = esp_timer_get_time();
+                                while ((esp_timer_get_time() - confirm_start) < 500000) { // 500ms
+                                    uart_write_bytes(UART_PORT, (const char*)tx_packet, sizeof(tx_packet));
+                                    uart_wait_tx_done(UART_PORT, pdMS_TO_TICKS(10));
+                                    vTaskDelay(pdMS_TO_TICKS(20));
+                                }
+                                ESP_LOGI(SERIAL_TAG, "Confirmation phase complete");
+                                
+                                break;
+                            } else {
+                                ESP_LOGW(SERIAL_TAG, "Checksum mismatch: got 0x%02X, expected 0x%02X", rx_packet[8], expected_checksum);
+                            }
+                        }
+                    }
+                }
+                vTaskDelay(pdMS_TO_TICKS(1));
+            }
+            
+            if (received_remote) {
+                break;
+            }
+            
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+        
+        // Delete UART driver before switching config
+        uart_driver_delete(UART_PORT);
+        
+        if (!received_remote) {
+            // Switch to other config for next iteration
+            is_master_config = !is_master_config;
+        }
+    }
+    
+    if (!received_remote) {
+        ESP_LOGE(SERIAL_TAG, "Negotiation timeout - no remote device found");
+        return ESP_ERR_TIMEOUT;
+    }
+    
+    // IMPORTANT: Delete UART driver here since we exited the loop with it still active
+    // (The loop breaks out when received_remote is true, before the delete call)
+    uart_driver_delete(UART_PORT);
+    
+    // Small delay to ensure both devices have finished their confirmation phase
+    vTaskDelay(pdMS_TO_TICKS(100));
+    
+    // Determine master based on day and MAC
+    int mac_cmp = mac_compare(local_mac, remote_mac);
+    ESP_LOGI(SERIAL_TAG, "MAC comparison result: %d (local vs remote)", mac_cmp);
+    
+    if (local_day % 2 == 0) {
+        // Even day: higher MAC becomes master
+        *result_is_master = (mac_cmp > 0) ? 1 : 0;
+        ESP_LOGI(SERIAL_TAG, "Even day (%d): %s MAC becomes master", 
+                 local_day, mac_cmp > 0 ? "higher" : "lower");
+    } else {
+        // Odd day: lower MAC becomes master
+        *result_is_master = (mac_cmp < 0) ? 1 : 0;
+        ESP_LOGI(SERIAL_TAG, "Odd day (%d): %s MAC becomes master", 
+                 local_day, mac_cmp < 0 ? "lower" : "higher");
+    }
+    
+    // Edge case: If MACs are equal (extremely rare), use day parity as tiebreaker
+    if (mac_cmp == 0) {
+        ESP_LOGW(SERIAL_TAG, "MACs are equal! Using day parity as tiebreaker.");
+        *result_is_master = (local_day % 2 == 0) ? 1 : 0; // Even day: local is master
+    }
+    
+    ESP_LOGI(SERIAL_TAG, "Negotiation complete: Local MAC %02X:%02X:%02X:%02X:%02X:%02X, Day %d -> %s",
+             local_mac[0], local_mac[1], local_mac[2], local_mac[3], local_mac[4], local_mac[5],
+             local_day, *result_is_master ? "MASTER" : "SLAVE");
+    
+    return ESP_OK;
 }

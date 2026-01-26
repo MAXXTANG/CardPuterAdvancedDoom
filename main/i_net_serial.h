@@ -331,6 +331,28 @@ void Serial_UpdateCurrentLevel(int episode, int map);
  */
 void Serial_ClearLevelMismatch(void);
 
+/**
+ * @brief Compare two MAC addresses (big-endian 48-bit integer)
+ * @param mac1 First MAC address
+ * @param mac2 Second MAC address
+ * @return negative if mac1 < mac2, 0 if equal, positive if mac1 > mac2
+ */
+int mac_compare(const uint8_t *mac1, const uint8_t *mac2);
+
+/**
+ * @brief Perform automatic role negotiation using MAC and RTC day
+ * @param local_mac Local MAC address (6 bytes)
+ * @param local_day Current day (1-31)
+ * @param remote_mac Buffer to store remote MAC (6 bytes)
+ * @param remote_day Buffer to store remote day
+ * @param result_is_master Output: 1 if this device is master, 0 if slave
+ * @param timeout_ms Timeout for negotiation in milliseconds
+ * @return ESP_OK on success, ESP_ERR_TIMEOUT on failure
+ */
+esp_err_t serial_net_auto_negotiate(const uint8_t *local_mac, uint8_t local_day, 
+                                     uint8_t *remote_mac, uint8_t *remote_day, 
+                                     int *result_is_master, int timeout_ms);
+
 #ifdef __cplusplus
 }
 #endif

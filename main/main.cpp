@@ -15,6 +15,7 @@
 #include <sys/types.h>
 
 #include "spi_display.hpp"
+#include "esp_mac.h"
 
 
 unsigned short * __sprite_data;
@@ -417,6 +418,75 @@ extern "C" void init_wad(void)
 }
 
 // Multiplayer role selection UI (UART Serial version - NO WiFi)
+// Get current day from BM8563 RTC (1-31)
+static uint8_t get_rtc_day()
+{
+    uint8_t day = 1;
+    // BM8563 I2C address (0x51) and day register (0x04)
+    const uint8_t rtc_addr = 0x51;
+    const uint8_t day_reg = 0x04;
+    
+    // Create device handle for RTC
+    i2c_master_dev_handle_t rtc_handle;
+    i2c_device_config_t rtc_cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address = rtc_addr,
+        .scl_speed_hz = 100000,  // Standard speed
+    };
+    
+    esp_err_t ret = i2c_master_bus_add_device(i2c_bus_handle_, &rtc_cfg, &rtc_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE("RTC", "Failed to add BM8563 device: %s", esp_err_to_name(ret));
+        return 1;  // Default to day 1 on error
+    }
+    
+    // Write register address to read
+    ret = i2c_master_transmit(rtc_handle, &day_reg, 1, 1000);
+    if (ret != ESP_OK) {
+        ESP_LOGE("RTC", "Failed to write register address: %s", esp_err_to_name(ret));
+        i2c_master_bus_rm_device(rtc_handle);
+        return 1;
+    }
+    
+    // Read day value
+    uint8_t bcd_data;
+    ret = i2c_master_receive(rtc_handle, &bcd_data, 1, 1000);
+    i2c_master_bus_rm_device(rtc_handle);
+    
+    if (ret != ESP_OK) {
+        ESP_LOGE("RTC", "Failed to read day: %s", esp_err_to_name(ret));
+        return 1;
+    }
+    
+    // BM8563 stores day in BCD format (bits 0-5, 1-31)
+    // Convert BCD to decimal: tens = (bcd_data >> 4) & 0x03, ones = bcd_data & 0x0F
+    uint8_t tens = (bcd_data >> 4) & 0x03;  // Day tens (0-3)
+    uint8_t ones = bcd_data & 0x0F;         // Day ones (0-9)
+    day = tens * 10 + ones;
+    
+    // Validate range
+    if (day < 1 || day > 31) {
+        ESP_LOGW("RTC", "Invalid day value %d, defaulting to 1", day);
+        day = 1;
+    }
+    
+    ESP_LOGI("RTC", "Read day from BM8563: %d", day);
+    return day;
+}
+
+// Read MAC address without enabling WiFi
+static void get_mac_address(uint8_t mac[6])
+{
+    esp_err_t ret = esp_read_mac(mac, ESP_MAC_WIFI_STA);
+    if (ret != ESP_OK) {
+        ESP_LOGE("MAC", "Failed to read MAC: %s", esp_err_to_name(ret));
+        memset(mac, 0, 6);
+    } else {
+        ESP_LOGI("MAC", "MAC: %02X:%02X:%02X:%02X:%02X:%02X",
+                mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    }
+}
+
 bool multiplayer_role_selection(void)
 {
     LGFX_Cardputer* display = (LGFX_Cardputer*)doom_canvas->getParent();
@@ -438,7 +508,7 @@ bool multiplayer_role_selection(void)
     display->setTextSize(1);
     display->setCursor(10, 100);
     display->setTextColor(TFT_WHITE, 0x4208);
-    display->print("M=Master  S=Slave  Enter=Single");
+    display->print("Automated role negotiation...");
     display->setCursor(40, 115);
     display->print("(Connect Grove cable first)");
     
@@ -449,128 +519,149 @@ bool multiplayer_role_selection(void)
     const int bar_y = 130;
     
     uint32_t start_time = millis();
-    uint32_t timeout_ms = 10000; // 10 seconds
+    uint32_t timeout_ms = 15000; // 15 seconds for negotiation
     
     bool mode_selected = false;
+    bool negotiation_complete = false;
+    
+    // Get local MAC and RTC day
+    uint8_t local_mac[6];
+    get_mac_address(local_mac);
+    uint8_t local_day = get_rtc_day();
+    
+    ESP_LOGI("NET", "Local MAC: %02X:%02X:%02X:%02X:%02X:%02X, Day: %d", 
+             local_mac[0], local_mac[1], local_mac[2], local_mac[3], local_mac[4], local_mac[5], local_day);
+    
+    uint8_t remote_mac[6];
+    uint8_t remote_day;
+    int auto_is_master;
     
     while (!mode_selected) {
         uint32_t elapsed = millis() - start_time;
-        if (elapsed >= timeout_ms) {
-            // Timeout - single player
-            display->fillScreen(0x0000); // Black
-            rgb_led_set_mode(LED_OFF);
-            return false;
-        }
         
         // Update progress bar
         int progress = (elapsed * bar_width) / timeout_ms;
         display->fillRect(bar_x, bar_y, progress, bar_height, TFT_YELLOW);
         
-        // Check for key press
+        // Check for timeout
+        if (elapsed >= timeout_ms) {
+            ESP_LOGW("NET", "Negotiation timeout - no remote device found");
+            display->fillScreen(0x0000); // Black
+            rgb_led_set_mode(LED_OFF);
+            return false; // Single player
+        }
+        
+        // Try automated negotiation - use longer timeout per call for better reliability
+        // Each call tries multiple pin configs (200ms each), so 2000ms = ~10 config attempts
+        if (!negotiation_complete) {
+            esp_err_t neg_ret = serial_net_auto_negotiate(local_mac, local_day, remote_mac, &remote_day, &auto_is_master, 2000);
+            
+            if (neg_ret == ESP_OK) {
+                negotiation_complete = true;
+                // Determine role based on negotiation result
+                is_multiplayer = true;
+                is_master = auto_is_master;
+                
+                ESP_LOGI("NET", "Negotiation succeeded: Role = %s (Day %d, Local MAC higher? %d)", 
+                         is_master ? "MASTER" : "SLAVE", local_day, mac_compare(local_mac, remote_mac));
+                
+                // Clear screen and show role with appropriate color
+                display->fillScreen(0x0000);
+                if (is_master) {
+                    display->setTextColor(TFT_GREEN, 0x0000);
+                    display->setTextSize(8);
+                    display->setCursor(60, 40);
+                    display->print("M");
+                    display->setTextSize(2);
+                    display->setCursor(60, 120);
+                    display->print("MASTER");
+                    rgb_led_set_mode(LED_SOLID_GREEN);
+                } else {
+                    display->setTextColor(TFT_RED, 0x0000);
+                    display->setTextSize(8);
+                    display->setCursor(60, 40);
+                    display->print("S");
+                    display->setTextSize(2);
+                    display->setCursor(60, 120);
+                    display->print("SLAVE");
+                    rgb_led_set_mode(LED_SOLID_BLUE);
+                }
+                
+                // Wait for 1 second to show role (reduced from 2 seconds for faster sync)
+                vTaskDelay(pdMS_TO_TICKS(1000));
+                
+                // Now initialize UART with determined role
+                display->fillScreen(0x0000);
+                display->setTextColor(TFT_WHITE, 0x0000);
+                display->setTextSize(2);
+                display->setCursor(30, 60);
+                display->print("Initializing...");
+                
+                if (serial_net_init() == ESP_OK) {
+                    display->setTextSize(1);
+                    display->setCursor(30, 90);
+                    if (is_master) {
+                        display->print("Syncing with slave...");
+                    } else {
+                        display->print("Waiting for master...");
+                    }
+                    
+                    // Perform handshake
+                    int handshake_timeout = is_master ? 5000 : 10000;
+                    if (serial_net_handshake(handshake_timeout) == ESP_OK) {
+                        // Success - flash green
+                        display->fillScreen(0x07E0); // Green
+                        rgb_led_set_mode(LED_SOLID_GREEN);
+                        vTaskDelay(pdMS_TO_TICKS(1000));
+                        display->fillScreen(0x0000);
+                        mode_selected = true;
+                        return true;
+                    } else {
+                        // Handshake failed
+                        display->fillScreen(TFT_RED);
+                        display->setTextSize(2);
+                        display->setCursor(20, 60);
+                        display->print("SYNC FAIL");
+                        display->setTextSize(1);
+                        display->setCursor(20, 90);
+                        display->print("Check Grove cable!");
+                        vTaskDelay(pdMS_TO_TICKS(2000));
+                        display->fillScreen(0x0000);
+                        rgb_led_set_mode(LED_OFF);
+                        serial_net_deinit();
+                        is_multiplayer = false;
+                        return false;
+                    }
+                } else {
+                    // UART init failed
+                    display->fillScreen(TFT_RED);
+                    display->setTextSize(2);
+                    display->setCursor(20, 60);
+                    display->print("UART FAIL");
+                    vTaskDelay(pdMS_TO_TICKS(2000));
+                    display->fillScreen(0x0000);
+                    rgb_led_set_mode(LED_OFF);
+                    is_multiplayer = false;
+                    return false;
+                }
+            } else if (neg_ret != ESP_ERR_TIMEOUT) {
+                // Some other error
+                ESP_LOGE("NET", "Negotiation error: %d", neg_ret);
+            }
+        }
+        
+        // Also allow manual override via Enter key for single player
         keyboard_update();
         uint8_t evt = __get_event();
-        
         if (evt != 0) {
             bool key_down = (evt & 0x80) != 0;
             char key = evt & 0x7F;
             
-            if (key_down) {
-                if (key == 'M' || key == 'm') {
-                    // Master mode - set globals BEFORE init
-                    is_multiplayer = true;
-                    is_master = true;
-                    
-                    display->fillScreen(0x0000);
-                    display->setTextColor(TFT_BLUE, 0x0000);
-                    display->setTextSize(6);
-                    display->setCursor(70, 60);
-                    display->print("M");
-                    rgb_led_set_mode(LED_SOLID_BLUE);
-                    
-                    // Initialize UART with software crossover
-                    if (serial_net_init() == ESP_OK) {
-                        display->setTextSize(2);
-                        display->setCursor(30, 120);
-                        display->print("Syncing...");
-                        
-                        if (serial_net_handshake(5000) == ESP_OK) {
-                            // Success - flash green
-                            display->fillScreen(0x07E0); // Green
-                            rgb_led_set_mode(LED_SOLID_GREEN);
-                            vTaskDelay(pdMS_TO_TICKS(1000));
-                            display->fillScreen(0x0000);
-                            return true;
-                        } else {
-                            // Failed
-                            display->fillScreen(TFT_RED);
-                            display->setTextSize(2);
-                            display->setCursor(20, 60);
-                            display->print("SYNC FAIL");
-                            display->setTextSize(1);
-                            display->setCursor(20, 90);
-                            display->print("Check Grove cable!");
-                            vTaskDelay(pdMS_TO_TICKS(2000));
-                            display->fillScreen(0x0000);
-                            rgb_led_set_mode(LED_OFF);
-                            serial_net_deinit();
-                            is_multiplayer = false;
-                            return false;
-                        }
-                    }
-                    is_multiplayer = false;
-                    return false;
-                    
-                } else if (key == 'S' || key == 's') {
-                    // Slave mode - set globals BEFORE init
-                    is_multiplayer = true;
-                    is_master = false;
-                    
-                    display->fillScreen(0x0000);
-                    display->setTextColor(TFT_BLUE, 0x0000);
-                    display->setTextSize(6);
-                    display->setCursor(70, 60);
-                    display->print("S");
-                    rgb_led_set_mode(LED_SOLID_BLUE);
-                    
-                    // Initialize UART with software crossover
-                    if (serial_net_init() == ESP_OK) {
-                        display->setTextSize(2);
-                        display->setCursor(30, 120);
-                        display->print("Waiting...");
-                        
-                        if (serial_net_handshake(10000) == ESP_OK) {
-                            // Success - flash green
-                            display->fillScreen(0x07E0); // Green
-                            rgb_led_set_mode(LED_SOLID_GREEN);
-                            vTaskDelay(pdMS_TO_TICKS(1000));
-                            display->fillScreen(0x0000);
-                            return true;
-                        } else {
-                            // Failed
-                            display->fillScreen(TFT_RED);
-                            display->setTextSize(2);
-                            display->setCursor(20, 60);
-                            display->print("SYNC FAIL");
-                            display->setTextSize(1);
-                            display->setCursor(20, 90);
-                            display->print("Check Grove cable!");
-                            vTaskDelay(pdMS_TO_TICKS(2000));
-                            display->fillScreen(0x0000);
-                            rgb_led_set_mode(LED_OFF);
-                            serial_net_deinit();
-                            is_multiplayer = false;
-                            return false;
-                        }
-                    }
-                    is_multiplayer = false;
-                    return false;
-                    
-                } else if (key == '\r' || key == '\n') {
-                    // Enter - single player
-                    display->fillScreen(0x0000);
-                    rgb_led_set_mode(LED_OFF);
-                    return false;
-                }
+            if (key_down && (key == '\r' || key == '\n')) {
+                // Enter - single player
+                display->fillScreen(0x0000);
+                rgb_led_set_mode(LED_OFF);
+                return false;
             }
         }
         
@@ -611,7 +702,7 @@ extern "C" void app_main(void)
         rgb_led_cleanup();
 
         // Pre-game startup sync: wait for both devices before entering doom_main
-        if (Serial_StartupSync(5000) != ESP_OK) {
+        if (Serial_StartupSync(10000) != ESP_OK) {
             printf("STARTUP SYNC FAILED - continuing anyway (risk of desync)\n");
         }
         
