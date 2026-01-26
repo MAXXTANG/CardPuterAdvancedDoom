@@ -140,7 +140,7 @@ esp_err_t serial_net_handshake(int timeout_ms)
     uint8_t expect_byte = is_master ? SERIAL_HANDSHAKE_S : SERIAL_HANDSHAKE_M;
     uint8_t rx_byte;
     int elapsed = 0;
-    const int interval = 200;  // Increased to 200ms for better synchronization window
+    const int interval = 100;  // 100ms for more attempts, better chance to sync
     while (elapsed < timeout_ms) {
         // Send our handshake byte
         uart_write_bytes(UART_PORT, (const char*)&tx_byte, 1);
@@ -160,9 +160,27 @@ esp_err_t serial_net_handshake(int timeout_ms)
                     ESP_LOGI(SERIAL_TAG, "HANDSHAKE SUCCESS (Slave synced with master)");
                 }
                 handshake_complete = true;
-                // DO NOT flush UART after handshake - it might discard the first ticcmd
-                // vTaskDelay(pdMS_TO_TICKS(50));
-                // uart_flush(UART_PORT);
+                // CRITICAL: Flush all buffers and reset state before framed packet communication
+                // This prevents stray handshake bytes from interfering with startup sync
+                Serial_FlushBuffers();
+                
+                // Additional safety: Wait for any lingering transmission to complete
+                uart_wait_tx_done(UART_PORT, pdMS_TO_TICKS(50));
+                
+                // Final flush to clear any last bytes
+                uart_flush(UART_PORT);
+                
+                // Drain any leftover bytes from UART (slave's extra confirmation, etc.)
+                uint8_t dummy;
+                int64_t drain_start = esp_timer_get_time();
+                while (esp_timer_get_time() - drain_start < 200000) { // 200ms for extra safety
+                    if (uart_read_bytes(UART_PORT, &dummy, 1, 0) > 0) {
+                        printf("HANDSHAKE: Drained stray byte: 0x%02X\n", dummy);
+                    }
+                    vTaskDelay(pdMS_TO_TICKS(1));
+                }
+                
+                printf("HANDSHAKE SUCCESS: Buffers cleared, ready for framed packets\n");
                 return ESP_OK;
             }
         }
@@ -663,6 +681,12 @@ void Serial_FlushBuffers(void)
     }
     // Flush UART hardware buffers
     uart_flush(UART_PORT);
+    
+    // CRITICAL: Reset ring buffer indices to prevent stale bytes from being parsed
+    rx_head = 0;
+    rx_tail = 0;
+    memset(rx_ring_buffer, 0, sizeof(rx_ring_buffer));
+    
     // Clear ticcmd queue
     for (int i = 0; i < TICCMD_QUEUE_SIZE; i++) {
         ticcmd_queue[i].valid = false;
@@ -779,6 +803,8 @@ esp_err_t Serial_StartupSync(int timeout_ms)
         printf("STARTUP SYNC: FAIL - serial not ready\n");
         return ESP_FAIL;
     }
+    // CRITICAL: Flush all buffers to ensure clean state for framed packet communication
+    Serial_FlushBuffers();
     printf("STARTUP SYNC: Starting (timeout=%dms) as %s\n",
            timeout_ms, is_master ? "MASTER" : "SLAVE");
     uint8_t pkt[1] = { NET_PKT_STARTUP_READY };
@@ -787,7 +813,7 @@ esp_err_t Serial_StartupSync(int timeout_ms)
     int64_t start_time = esp_timer_get_time();
     int64_t timeout_us = (int64_t)timeout_ms * 1000;
     int64_t last_send_time = 0;
-    const int send_interval_us = 100000; // 100ms
+    const int send_interval_us = 50000; // 50ms for faster retry
     while (!(sent && received)) {
         int64_t now = esp_timer_get_time();
         if ((now - start_time) >= timeout_us) {
