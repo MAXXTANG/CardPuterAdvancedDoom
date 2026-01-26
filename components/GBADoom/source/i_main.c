@@ -70,8 +70,18 @@
 
 void I_Init(void)
 {
-    if (!(nomusicparm && nosfxparm))
+    printf("[DOOM] I_Init: Checking audio params...\n");
+    fflush(stdout);
+    if (!(nomusicparm && nosfxparm)) {
+        printf("[DOOM] I_Init: Calling I_InitSound()...\n");
+        fflush(stdout);
         I_InitSound();
+        printf("[DOOM] I_Init: I_InitSound() complete!\n");
+        fflush(stdout);
+    } else {
+        printf("[DOOM] I_Init: Audio disabled by params\n");
+        fflush(stdout);
+    }
 }
 
 static void PrintVer(void)
@@ -82,18 +92,39 @@ static void PrintVer(void)
 
 int doom_main(int argc, const char * const * argv)
 {
+    printf("[DOOM] >>> doom_main() ENTRY <<<\n");
+    fflush(stdout);
+    
     /* cphipps - call to video specific startup code */
+    printf("[DOOM] Step 1: I_PreInitGraphics()...\n");
+    fflush(stdout);
     I_PreInitGraphics();
+    printf("[DOOM] Step 1: I_PreInitGraphics() DONE\n");
+    fflush(stdout);
 
     PrintVer();
 
     //Call this before Z_Init as maxmod uses malloc.
+    printf("[DOOM] Step 2: I_Init() (audio)...\n");
+    fflush(stdout);
     I_Init();
+    printf("[DOOM] Step 2: I_Init() DONE\n");
+    fflush(stdout);
 
+    printf("[DOOM] Step 3: Z_Init() (zone memory)...\n");
+    fflush(stdout);
     Z_Init();                  /* 1/18/98 killough: start up memory stuff first */
+    printf("[DOOM] Step 3: Z_Init() DONE\n");
+    fflush(stdout);
 
+    printf("[DOOM] Step 4: InitGlobals()...\n");
+    fflush(stdout);
     InitGlobals();
+    printf("[DOOM] Step 4: InitGlobals() DONE\n");
+    fflush(stdout);
 
+    printf("[DOOM] Step 5: D_DoomMain() - entering game loop...\n");
+    fflush(stdout);
     D_DoomMain ();
     return 0;
 }

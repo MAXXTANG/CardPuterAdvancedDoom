@@ -73,6 +73,14 @@ static void P_SetPsprite(player_t *player, int position, statenum_t stnum)
           break;
         }
 
+      // Check for invalid state index
+      if (stnum < 0 || stnum >= NUMSTATES)
+        {
+          // Invalid state, set to null state
+          psp->state = NULL;
+          break;
+        }
+
       state = &states[stnum];
       psp->state = state;
       psp->tics = state->tics;        // could be 0

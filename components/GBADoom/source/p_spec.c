@@ -2172,7 +2172,7 @@ void P_PlayerInSpecialSector (player_t* player)
 
       case 11:
         if (!(_g->leveltime&0x1f))
-          _g->player.cheats -= CF_GODMODE; //Vanilla disables GodMode in floor-11
+          _g->players[_g->consoleplayer].cheats -= CF_GODMODE; //Vanilla disables GodMode in floor-11
           P_DamageMobj (player->mo, NULL, NULL, 20);
 
         if (player->health <= 10)

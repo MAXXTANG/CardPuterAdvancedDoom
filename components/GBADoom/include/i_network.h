@@ -40,6 +40,11 @@
         #define IPPORT_RESERVED 1024
 #endif
 
+// Serial multiplayer support (UART via Grove cable)
+#ifdef ESP_PLATFORM
+#include "../../main/i_net_serial.h"
+#endif
+
 void I_InitNetwork(void);
 size_t I_GetPacket(packet_header_t* buffer, size_t buflen);
 void I_SendPacket(packet_header_t* packet, size_t len);

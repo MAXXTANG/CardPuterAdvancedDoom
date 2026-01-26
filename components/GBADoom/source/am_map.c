@@ -242,8 +242,8 @@ static void AM_initVariables(void)
     _g->m_h = FTOM(f_h);
 
 
-    _g->m_x = (_g->player.mo->x >> FRACTOMAPBITS) - _g->m_w/2;//e6y
-    _g->m_y = (_g->player.mo->y >> FRACTOMAPBITS) - _g->m_h/2;//e6y
+    _g->m_x = (_g->players[_g->displayplayer].mo->x >> FRACTOMAPBITS) - _g->m_w/2;//e6y
+    _g->m_y = (_g->players[_g->displayplayer].mo->y >> FRACTOMAPBITS) - _g->m_h/2;//e6y
     AM_changeWindowLoc();
 
     // inform the status bar of the change
@@ -398,7 +398,7 @@ boolean AM_Responder
             _g->automapmode ^= am_follow;     // CPhipps - put all automap mode stuff into one enum
             _g->f_oldloc.x = INT_MAX;
             // Ty 03/27/98 - externalized
-            _g->player.message = (_g->automapmode & am_follow) ? AMSTR_FOLLOWON : AMSTR_FOLLOWOFF;
+            _g->players[_g->displayplayer].message = (_g->automapmode & am_follow) ? AMSTR_FOLLOWON : AMSTR_FOLLOWOFF;
         }                                                         //    |
         else if (ch == key_map_zoomout)
         {
@@ -508,14 +508,14 @@ static void AM_changeWindowScale(void)
 //
 static void AM_doFollowPlayer(void)
 {
-    if (_g->f_oldloc.x != _g->player.mo->x || _g->f_oldloc.y != _g->player.mo->y)
+    if (_g->f_oldloc.x != _g->players[_g->displayplayer].mo->x || _g->f_oldloc.y != _g->players[_g->displayplayer].mo->y)
     {
-        _g->m_x = FTOM(MTOF(_g->player.mo->x >> FRACTOMAPBITS)) - _g->m_w/2;//e6y
-        _g->m_y = FTOM(MTOF(_g->player.mo->y >> FRACTOMAPBITS)) - _g->m_h/2;//e6y
+        _g->m_x = FTOM(MTOF(_g->players[_g->displayplayer].mo->x >> FRACTOMAPBITS)) - _g->m_w/2;//e6y
+        _g->m_y = FTOM(MTOF(_g->players[_g->displayplayer].mo->y >> FRACTOMAPBITS)) - _g->m_h/2;//e6y
         _g->m_x2 =  _g->m_x + _g->m_w;
         _g->m_y2 =  _g->m_y + _g->m_h;
-        _g->f_oldloc.x = _g->player.mo->x;
-        _g->f_oldloc.y = _g->player.mo->y;
+        _g->f_oldloc.x = _g->players[_g->displayplayer].mo->x;
+        _g->f_oldloc.y = _g->players[_g->displayplayer].mo->y;
     }
 }
 
@@ -781,8 +781,8 @@ static void AM_drawWalls(void)
 
         if (_g->automapmode & am_rotate)
         {
-            AM_rotate(&l.a.x, &l.a.y, ANG90-_g->player.mo->angle, _g->player.mo->x, _g->player.mo->y);
-            AM_rotate(&l.b.x, &l.b.y, ANG90-_g->player.mo->angle, _g->player.mo->x, _g->player.mo->y);
+            AM_rotate(&l.a.x, &l.a.y, ANG90-_g->players[_g->displayplayer].mo->angle, _g->players[_g->displayplayer].mo->x, _g->players[_g->displayplayer].mo->y);
+            AM_rotate(&l.b.x, &l.b.y, ANG90-_g->players[_g->displayplayer].mo->angle, _g->players[_g->displayplayer].mo->x, _g->players[_g->displayplayer].mo->y);
         }
 
         // if line has been seen or IDDT has been used
@@ -916,7 +916,7 @@ static void AM_drawWalls(void)
                 }
             }
         } // now draw the lines only visible because the player has computermap
-        else if (_g->player.powers[pw_allmap]) // computermap visible lines
+        else if (_g->players[_g->displayplayer].powers[pw_allmap]) // computermap visible lines
         {
             if (!(_g->lines[i].flags & ML_DONTDRAW)) // invisible flag lines do not show
             {
@@ -953,7 +953,7 @@ static void AM_drawLineCharacter(const mline_t* lineguy, int lineguylines, fixed
     int   i;
     mline_t l;
 
-    if (_g->automapmode & am_rotate) angle -= _g->player.mo->angle - ANG90; // cph
+    if (_g->automapmode & am_rotate) angle -= _g->players[_g->displayplayer].mo->angle - ANG90; // cph
 
     for (i=0;i<lineguylines;i++)
     {
@@ -1005,10 +1005,10 @@ static void AM_drawPlayers(void)
                 player_arrow,
                 NUMPLYRLINES,
                 0,
-                _g->player.mo->angle,
+                _g->players[_g->displayplayer].mo->angle,
                 mapcolor_sngl,      //jff color
-                _g->player.mo->x >> FRACTOMAPBITS,//e6y
-                _g->player.mo->y >> FRACTOMAPBITS);//e6y
+                _g->players[_g->displayplayer].mo->x >> FRACTOMAPBITS,//e6y
+                _g->players[_g->displayplayer].mo->y >> FRACTOMAPBITS);//e6y
 
 }
 

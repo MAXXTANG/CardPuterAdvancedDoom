@@ -212,7 +212,7 @@ static void D_Display (void)
 
         // Now do the drawing
         if (viewactive)
-            R_RenderPlayerView (&_g->player);
+            R_RenderPlayerView (&_g->players[_g->displayplayer]);
 
         if (_g->automapmode & am_active)
             AM_Drawer();
@@ -265,7 +265,7 @@ static void D_DoomLoop(void)
         if (_g->singletics)
         {
             I_StartTic ();
-            G_BuildTiccmd (&_g->netcmd);
+            G_BuildTiccmd (&_g->netcmds[_g->consoleplayer]);
 
             if (_g->advancedemo)
                 D_DoAdvanceDemo ();
@@ -280,8 +280,8 @@ static void D_DoomLoop(void)
             TryRunTics (); // will run at least one tic
 
         // killough 3/16/98: change consoleplayer to displayplayer
-        if (_g->player.mo) // cph 2002/08/10
-            S_UpdateSounds(_g->player.mo);// move positional sounds
+        if (_g->players[_g->displayplayer].mo) // cph 2002/08/10
+            S_UpdateSounds(_g->players[_g->displayplayer].mo);// move positional sounds
 
         // Update display, next frame, with current state.
         D_Display();
@@ -446,7 +446,7 @@ const demostates[][4] =
 
 void D_DoAdvanceDemo(void)
 {
-    _g->player.playerstate = PST_LIVE;  /* not reborn */
+    _g->players[_g->consoleplayer].playerstate = PST_LIVE;  /* not reborn */
     _g->advancedemo = _g->usergame = false;
     _g->gameaction = ga_nothing;
 

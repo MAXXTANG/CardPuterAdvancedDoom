@@ -38,6 +38,10 @@
 #include <stdio.h>
 #include <fcntl.h>
 
+#ifdef ESP_PLATFORM
+#include "esp_err.h"
+#endif
+
 #include "doomdef.h"
 #include "doomstat.h"
 #include "dstrings.h"
@@ -333,6 +337,22 @@ static void M_VerifyNightmare(int ch)
     if (ch != key_enter)
         return;
 
+#ifdef ESP_PLATFORM
+    // MULTIPLAYER: Master does blocking handshake with slave
+    extern int is_multiplayer;
+    extern int is_master;
+    extern esp_err_t Serial_StartGameHandshake(int skill, int episode, int map, int timeout_ms);
+    
+    if (is_multiplayer && is_master) {
+        printf("MASTER: Starting game handshake - nightmare, ep=%d, map=1\n", _g->epi+1);
+        esp_err_t ret = Serial_StartGameHandshake(nightmare, _g->epi+1, 1, 5000);
+        if (ret != ESP_OK) {
+            printf("MASTER: Handshake failed! Slave did not respond.\n");
+            // Could show error message here, but continue anyway for testing
+        }
+    }
+#endif
+
     G_DeferedInitNew(nightmare,_g->epi+1,1);
 }
 
@@ -345,6 +365,22 @@ void M_ChooseSkill(int choice)
     }
     else
     {
+#ifdef ESP_PLATFORM
+        // MULTIPLAYER: Master does blocking handshake with slave
+        extern int is_multiplayer;
+        extern int is_master;
+        extern esp_err_t Serial_StartGameHandshake(int skill, int episode, int map, int timeout_ms);
+        
+        if (is_multiplayer && is_master) {
+            printf("MASTER: Starting game handshake - skill=%d, ep=%d, map=1\n", choice, _g->epi+1);
+            esp_err_t ret = Serial_StartGameHandshake(choice, _g->epi+1, 1, 5000);
+            if (ret != ESP_OK) {
+                printf("MASTER: Handshake failed! Slave did not respond.\n");
+                // Could show error message here, but continue anyway for testing
+            }
+        }
+#endif
+
         G_DeferedInitNew(choice,_g->epi+1,1);
 		M_ClearMenus ();
     }    
@@ -780,9 +816,9 @@ void M_ChangeMessages(int choice)
   _g->showMessages = 1 - _g->showMessages;
 
   if (!_g->showMessages)
-    _g->player.message = MSGOFF; // Ty 03/27/98 - externalized
+    _g->players[_g->consoleplayer].message = MSGOFF; // Ty 03/27/98 - externalized
   else
-    _g->player.message = MSGON ; // Ty 03/27/98 - externalized
+    _g->players[_g->consoleplayer].message = MSGON ; // Ty 03/27/98 - externalized
 
   _g->message_dontfuckwithme = true;
 
@@ -797,9 +833,9 @@ void M_ChangeAlwaysRun(int choice)
     _g->alwaysRun = 1 - _g->alwaysRun;
 
     if (!_g->alwaysRun)
-      _g->player.message = RUNOFF; // Ty 03/27/98 - externalized
+      _g->players[_g->consoleplayer].message = RUNOFF; // Ty 03/27/98 - externalized
     else
-      _g->player.message = RUNON ; // Ty 03/27/98 - externalized
+      _g->players[_g->consoleplayer].message = RUNON ; // Ty 03/27/98 - externalized
 
     G_SaveSettings();
 }
@@ -811,9 +847,9 @@ void M_ChangeDetail(int choice)
     _g->highDetail = 1 - _g->highDetail;
 
     if (!_g->highDetail)
-      _g->player.message = LOWDETAIL; // Ty 03/27/98 - externalized
+      _g->players[_g->consoleplayer].message = LOWDETAIL; // Ty 03/27/98 - externalized
     else
-      _g->player.message = HIGHDETAIL ; // Ty 03/27/98 - externalized
+      _g->players[_g->consoleplayer].message = HIGHDETAIL ; // Ty 03/27/98 - externalized
 
     G_SaveSettings();
 }
@@ -1152,6 +1188,47 @@ void M_Ticker (void)
       _g->whichSkull ^= 1;
       _g->skullAnimCounter = 8;
     }
+
+#ifdef ESP_PLATFORM
+  // MULTIPLAYER SLAVE: Poll for START_GAME from master
+  extern int is_multiplayer;
+  extern int is_master;
+  extern int serial_net_is_ready(void);
+  extern esp_err_t Serial_CheckStartGame(int *out_skill, int *out_episode, int *out_map);
+  extern esp_err_t Serial_SendStartAck(void);
+  
+  // Debug: Print polling status every ~2 seconds (70 ticks)
+  static int poll_debug_counter = 0;
+  static int startup_debug_done = 0;
+  
+  // Print once at startup to confirm M_Ticker is running
+  if (!startup_debug_done) {
+    startup_debug_done = 1;
+    printf("M_Ticker: RUNNING - is_multiplayer=%d is_master=%d\n", (int)is_multiplayer, (int)is_master);
+  }
+  
+  if (is_multiplayer && !is_master) {
+    poll_debug_counter++;
+    if (poll_debug_counter >= 70) {
+      poll_debug_counter = 0;
+      printf("SLAVE M_Ticker: Polling for START_GAME (ready=%d)\n", serial_net_is_ready());
+    }
+    
+    if (serial_net_is_ready()) {
+      int skill, episode, map;
+      if (Serial_CheckStartGame(&skill, &episode, &map) == ESP_OK) {
+        printf("SLAVE: Received START_GAME - skill=%d ep=%d map=%d, sending ACK...\n", skill, episode, map);
+        
+        // Send ACK to master BEFORE starting game load
+        Serial_SendStartAck();
+        
+        // Start the game with same parameters as master
+        G_DeferedInitNew(skill, episode, map);
+        M_ClearMenus();
+      }
+    }
+  }
+#endif
 }
 
 /////////////////////////////

@@ -39,6 +39,10 @@
 
 #include "global_data.h"
 
+#ifdef ESP_PLATFORM
+#include "esp_err.h"
+#include "../../main/i_net_serial.h"
+#endif
 
 //
 // THINKERS
@@ -178,6 +182,31 @@ void P_SetTarget(mobj_t **mop, mobj_t *targ)
 
 void P_Ticker (void)
 {
+  int i;
+
+#ifdef ESP_PLATFORM
+  extern int is_multiplayer;
+  if (is_multiplayer) {
+    _g->prndindex = (0xED + _g->leveltime) & 0xff;
+  }
+  if (is_multiplayer && _g->gamestate == GS_LEVEL && _g->leveltime > 50) {
+    int remote_secret_exit = 0;
+    int remote_next_episode = 0;
+    int remote_next_map = 0;
+    if (Serial_CheckExitLevel(&remote_secret_exit, &remote_next_episode, &remote_next_map) == ESP_OK) {
+      printf("NET: Remote player triggered exit (secret=%d, next=E%dM%d) at tic %d\n", 
+             remote_secret_exit, remote_next_episode, remote_next_map, _g->leveltime);
+      _g->secretexit = remote_secret_exit;
+      // Store next level info for G_DoWorldDone
+      if (remote_next_episode > 0 && remote_next_map > 0) {
+        _g->wminfo.epsd = remote_next_episode - 1;
+        _g->wminfo.next = remote_next_map - 1;
+      }
+      _g->gameaction = ga_completed;
+    }
+  }
+#endif
+
   /* pause if in menu and at least one tic has been run
    *
    * killough 9/29/98: note that this ties in with basetic,
@@ -187,14 +216,19 @@ void P_Ticker (void)
    * All of this complicated mess is used to preserve demo sync.
    */
 
-  if (_g->menuactive && !_g->demoplayback && _g->player.viewz != 1)
+  if (_g->menuactive && !_g->demoplayback && _g->players[_g->displayplayer].viewz != 1)
     return;
 
   P_MapStart();
                // not if this is an intermission screen
   if(_g->gamestate==GS_LEVEL)
-    if (_g->playeringame)
-      P_PlayerThink(&_g->player);
+  {
+    // Think for all players in game
+    for (i = 0; i < MAXPLAYERS; i++) {
+      if (_g->playeringame[i])
+        P_PlayerThink(&_g->players[i]);
+    }
+  }
 
   P_RunThinkers();
   P_UpdateSpecials();
@@ -202,4 +236,3 @@ void P_Ticker (void)
   P_MapEnd();
   _g->leveltime++;                       // for par times
 }
-

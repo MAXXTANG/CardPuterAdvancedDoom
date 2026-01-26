@@ -471,10 +471,10 @@ void P_SetupLevel(int episode, int map, int playermask, skill_t skill)
     _g->wminfo.partime = 180;
 
     for (i=0; i<MAXPLAYERS; i++)
-        _g->player.killcount = _g->player.secretcount = _g->player.itemcount = 0;
+        _g->players[_g->consoleplayer].killcount = _g->players[_g->consoleplayer].secretcount = _g->players[_g->consoleplayer].itemcount = 0;
 
     // Initial height of PointOfView will be set by player think.
-    _g->player.viewz = 1;
+    _g->players[_g->consoleplayer].viewz = 1;
 
     // Make sure all sounds are stopped before Z_FreeTags.
     S_Start();
@@ -534,14 +534,17 @@ void P_SetupLevel(int episode, int map, int playermask, skill_t skill)
     memset(_g->playerstarts,0,sizeof(_g->playerstarts));
 
     for (i = 0; i < MAXPLAYERS; i++)
-        _g->player.mo = NULL;
+        _g->players[i].mo = NULL;
 
+    printf("P_SetupLevel: P_MapStart\n");
     P_MapStart();
 
+    printf("P_SetupLevel: P_LoadThings\n");
     P_LoadThings(lumpnum+ML_THINGS);
 
-    {
-        if (_g->playeringame && !_g->player.mo)
+    // Check all players have spawned
+    for (i = 0; i < MAXPLAYERS; i++) {
+        if (_g->playeringame[i] && !_g->players[i].mo)
             I_Error("P_SetupLevel: missing player %d start\n", i+1);
     }
 
@@ -550,10 +553,13 @@ void P_SetupLevel(int episode, int map, int playermask, skill_t skill)
         P_SpawnBrainTargets();
 
     // set up world state
+    printf("P_SetupLevel: P_SpawnSpecials\n");
     P_SpawnSpecials();
 
+    printf("P_SetupLevel: P_MapEnd\n");
     P_MapEnd();
-
+    
+    printf("P_SetupLevel: COMPLETE\n");
 }
 
 //

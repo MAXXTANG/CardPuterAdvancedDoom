@@ -257,18 +257,18 @@ void S_StartSoundAtVolume(void *origin_p, int sfx_id, int volume)
   // Check to see if it is audible, modify the params
   // killough 3/7/98, 4/25/98: code rearranged slightly
 
-  if (!origin || origin == _g->player.mo) {
+  if (!origin || origin == _g->players[_g->displayplayer].mo) {
     sep = NORM_SEP;
     volume *= 8;
   } else
-    if (!S_AdjustSoundParams(_g->player.mo, origin, &volume,
+    if (!S_AdjustSoundParams(_g->players[_g->displayplayer].mo, origin, &volume,
                              &sep, &pitch)) {
         printf("!S_AdjustSoundParams()\n");
       return;
     }
     else
-      if ( origin->x == _g->player.mo->x &&
-           origin->y == _g->player.mo->y)
+      if ( origin->x == _g->players[_g->displayplayer].mo->x &&
+           origin->y == _g->players[_g->displayplayer].mo->y)
         sep = NORM_SEP;
 
   // hacks to vary the sfx pitches

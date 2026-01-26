@@ -123,7 +123,8 @@ typedef enum {
 
 
 // The maximum number of players, multiplayer/networking.
-#define MAXPLAYERS       1
+// Changed from 1 to 2 for M5 Cardputer UART multiplayer
+#define MAXPLAYERS       2
 
 // phares 5/14/98:
 // DOOM Editor Numbers (aka doomednum in mobj_t)

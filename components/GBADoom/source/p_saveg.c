@@ -58,8 +58,8 @@ void P_ArchivePlayers (void)
 	
 
 */
-	dest = &_g->player;
-	//memcpy (dest,&_g->player,sizeof(player_t));
+	dest = &_g->players[0];
+	//memcpy (dest,&_g->players[0],sizeof(player_t));
 	
 	char need_restore[NUMSPRITES];
 	memset(need_restore,0,NUMSPRITES);
@@ -76,7 +76,7 @@ void P_ArchivePlayers (void)
 	    }
 		
 	}
-	wr(&_g->player,sizeof(player_t));
+	wr(&_g->players[0],sizeof(player_t));
 	for (j=0 ; j<NUMPSPRITES ; j++)
 	{
 
@@ -112,15 +112,15 @@ void P_UnArchivePlayers (void)
 	
 
 	*/
-	rr(&_g->player, sizeof(player_t));
+	rr(&_g->players[0], sizeof(player_t));
 	
 
 	for (j=0 ; j<NUMPSPRITES ; j++)
 	{
-	    if (_g->player. psprites[j].state)
+	    if (_g->players[0]. psprites[j].state)
 	    {
-			_g->player. psprites[j].state 
-				= (state_t *)((char *)states + (size_t)_g->player.psprites[j].state);
+			_g->players[0]. psprites[j].state 
+				= (state_t *)((char *)states + (size_t)_g->players[0].psprites[j].state);
 	    }
 	}
 	/*
@@ -633,7 +633,7 @@ void P_UnArchiveThinkerPointers (void) {
       th = next;
     }
 
-	_g->player.mo = (mobj_t *)find_thinker_by_prev_pointer((char *)_g->player.mo);
-	_g->player.attacker = (mobj_t *)find_thinker_by_prev_pointer((char *)_g->player.attacker);
+	_g->players[0].mo = (mobj_t *)find_thinker_by_prev_pointer((char *)_g->players[0].mo);
+	_g->players[0].attacker = (mobj_t *)find_thinker_by_prev_pointer((char *)_g->players[0].attacker);
 	
 }

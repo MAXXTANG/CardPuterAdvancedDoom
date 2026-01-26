@@ -89,7 +89,7 @@ fixed_t ftom_zoommul; // how far the window zooms each tic (fb coords)
 //d_client.c
 //******************************************************************************
 
-ticcmd_t         netcmd;
+ticcmd_t         netcmds[MAXPLAYERS];  // Commands for each player
 int maketic;
 int lastmadetic;
 
@@ -125,6 +125,9 @@ unsigned int fps_framerate;
 // Game Mode - identify IWAD as shareware, retail etc.
 GameMode_t gamemode;
 GameMission_t   gamemission;
+
+int deathmatch;
+int nomonsters;
 
 
 //******************************************************************************
@@ -168,7 +171,11 @@ skill_t         gameskill;
 int             gameepisode;
 int             gamemap;
 
-player_t        player;
+// Player structures - players[0] is local player, players[1] is remote in multiplayer
+player_t        players[MAXPLAYERS];
+
+int             consoleplayer;  // Player we're controlling (0=master, 1=slave in MP)
+int             displayplayer;  // Player we're viewing from
 
 int             starttime;     // for comparative timing purposes
 
@@ -200,7 +207,8 @@ boolean         respawnmonsters;
 
 boolean         usergame;      // ok to save / end game
 boolean         timingdemo;    // if true, exit with report on completion
-boolean         playeringame;
+boolean         netgame;       // true if this is a network game (multiplayer)
+boolean         playeringame[MAXPLAYERS];  // Which players are in game
 boolean         demoplayback;
 boolean         singledemo;           // quit after playing a demo from cmdline
 boolean         haswolflevels;// jff 4/18/98 wolf levels present

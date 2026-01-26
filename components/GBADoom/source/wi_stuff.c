@@ -932,10 +932,15 @@ void WI_drawStats(void)
 //
 void WI_checkForAccelerate(void)
 {
-  player_t  *player = &_g->player;
+  int i;
 
-    if (_g->playeringame)
+    for (i = 0; i < MAXPLAYERS; i++)
     {
+      player_t *player = &_g->players[i];
+      
+      if (!_g->playeringame[i])
+        continue;
+        
       if (player->cmd.buttons & BT_ATTACK)
       {
         if (!player->attackdown)

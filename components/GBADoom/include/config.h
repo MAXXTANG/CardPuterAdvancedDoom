@@ -12,6 +12,9 @@
 /* Define for support for MBF helper dogs */
 //#define DOGS 1
 
+/* Define to enable level debugging (press 'x' to exit level) */
+/* #undef LEVEL_DEBUG */
+
 /* Define to be the path where Doom WADs are stored */
 #define DOOMWADDIR "/usr/local/share/games/doom"
 

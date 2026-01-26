@@ -73,11 +73,15 @@ void Z_Init (void)
 {
     memblock_t*	block;
 
-
+    printf("[Z_INIT] Starting zone memory allocation...\n");
+    printf("[Z_INIT] Requested max heap size: %u bytes\n", maxHeapSize);
+    fflush(stdout);
 
     unsigned int heapSize = maxHeapSize;
 
     //We can now alloc all of the rest fo the memory.
+    printf("[Z_INIT] Attempting malloc loop...\n");
+    fflush(stdout);
     do
     {
         mainzone = malloc(heapSize);
@@ -87,6 +91,8 @@ void Z_Init (void)
 
     heapSize += 4;
 
+    printf("[Z_INIT] malloc SUCCESS! Got %u bytes at %p\n", heapSize, (void*)mainzone);
+    fflush(stdout);
     lprintf(LO_INFO,"Z_Init: Heapsize is %d bytes.", heapSize);
 
     // set the entire zone to one free block

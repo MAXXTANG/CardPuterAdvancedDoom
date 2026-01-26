@@ -81,7 +81,7 @@ static int ST_calcPainOffset(void)
 {
   static int lastcalc;
   static int oldhealth = -1;
-  int health = _g->player.health > 100 ? 100 : _g->player.health;
+  int health = _g->players[_g->displayplayer].health > 100 ? 100 : _g->players[_g->displayplayer].health;
 
   if (health != oldhealth)
     {
@@ -110,7 +110,7 @@ static void ST_updateFaceWidget(void)
     if (priority < 10)
     {
         // dead
-        if (!_g->player.health)
+        if (!_g->players[_g->displayplayer].health)
         {
             priority = 9;
             _g->st_faceindex = ST_DEADFACE;
@@ -120,17 +120,17 @@ static void ST_updateFaceWidget(void)
 
     if (priority < 9)
     {
-        if (_g->player.bonuscount)
+        if (_g->players[_g->displayplayer].bonuscount)
         {
             // picking up bonus
             doevilgrin = false;
 
             for (i=0;i<NUMWEAPONS;i++)
             {
-                if (_g->oldweaponsowned[i] != _g->player.weaponowned[i])
+                if (_g->oldweaponsowned[i] != _g->players[_g->displayplayer].weaponowned[i])
                 {
                     doevilgrin = true;
-                    _g->oldweaponsowned[i] = _g->player.weaponowned[i];
+                    _g->oldweaponsowned[i] = _g->players[_g->displayplayer].weaponowned[i];
                 }
             }
             if (doevilgrin)
@@ -147,7 +147,7 @@ static void ST_updateFaceWidget(void)
 	//Restore the face looking at enemies direction in this SVN... Cause it's handy! ~Kippykip
 	if (priority < 8)
     {
-        if (_g->player.damagecount && _g->player.attacker && _g->player.attacker != _g->player.mo)
+        if (_g->players[_g->displayplayer].damagecount && _g->players[_g->displayplayer].attacker && _g->players[_g->displayplayer].attacker != _g->players[_g->displayplayer].mo)
 		{
 			// being attacked
 			priority = 7;
@@ -155,28 +155,28 @@ static void ST_updateFaceWidget(void)
 			// haleyjd 10/12/03: classic DOOM problem of missing OUCH face
 			// was due to inversion of this test:
 			// if(plyr->health - st_oldhealth > ST_MUCHPAIN)
-            if(_g->st_oldhealth - _g->player.health > ST_MUCHPAIN)
+            if(_g->st_oldhealth - _g->players[_g->displayplayer].health > ST_MUCHPAIN)
 			{
 				_g->st_facecount = ST_TURNCOUNT;
 				_g->st_faceindex = ST_calcPainOffset() + ST_OUCHOFFSET;
 			}
 			else
 			{
-                badguyangle = R_PointToAngle2(_g->player.mo->x,
-                _g->player.mo->y,
-                _g->player.attacker->x,
-                _g->player.attacker->y);
+                badguyangle = R_PointToAngle2(_g->players[_g->displayplayer].mo->x,
+                _g->players[_g->displayplayer].mo->y,
+                _g->players[_g->displayplayer].attacker->x,
+                _g->players[_g->displayplayer].attacker->y);
 
-                if (badguyangle > _g->player.mo->angle)
+                if (badguyangle > _g->players[_g->displayplayer].mo->angle)
 				{
 					// whether right or left
-                    diffang = badguyangle - _g->player.mo->angle;
+                    diffang = badguyangle - _g->players[_g->displayplayer].mo->angle;
 					i = diffang > ANG180;
 				}
 				else
 				{
 					// whether left or right
-                    diffang = _g->player.mo->angle - badguyangle;
+                    diffang = _g->players[_g->displayplayer].mo->angle - badguyangle;
 					i = diffang <= ANG180;
 				} // confusing, aint it?
 
@@ -205,12 +205,12 @@ static void ST_updateFaceWidget(void)
 
     if (priority < 7)
     {
-        if (_g->player.damagecount)
+        if (_g->players[_g->displayplayer].damagecount)
         {
             // haleyjd 10/12/03: classic DOOM problem of missing OUCH face
             // was due to inversion of this test:
             // if(plyr->health - st_oldhealth > ST_MUCHPAIN)
-            if(_g->st_oldhealth - _g->player.health > ST_MUCHPAIN)
+            if(_g->st_oldhealth - _g->players[_g->displayplayer].health > ST_MUCHPAIN)
             {
                 priority = 7;
                 _g->st_facecount = ST_TURNCOUNT;
@@ -229,7 +229,7 @@ static void ST_updateFaceWidget(void)
     if (priority < 6)
     {
         // rapid firing
-        if (_g->player.attackdown)
+        if (_g->players[_g->displayplayer].attackdown)
         {
             if (lastattackdown==-1)
                 lastattackdown = ST_RAMPAGEDELAY;
@@ -249,8 +249,8 @@ static void ST_updateFaceWidget(void)
     if (priority < 5)
     {
         // invulnerability
-        if ((_g->player.cheats & CF_GODMODE)
-                || _g->player.powers[pw_invulnerability])
+        if ((_g->players[_g->displayplayer].cheats & CF_GODMODE)
+                || _g->players[_g->displayplayer].powers[pw_invulnerability])
         {
             priority = 4;
 
@@ -280,21 +280,21 @@ static void ST_updateWidgets(void)
 
     if(_g->fps_show)
         _g->w_ready.num = &_g->fps_framerate;
-    else if (weaponinfo[_g->player.readyweapon].ammo == am_noammo)
+    else if (weaponinfo[_g->players[_g->displayplayer].readyweapon].ammo == am_noammo)
         _g->w_ready.num = &largeammo;
     else
-        _g->w_ready.num = &_g->player.ammo[weaponinfo[_g->player.readyweapon].ammo];
+        _g->w_ready.num = &_g->players[_g->displayplayer].ammo[weaponinfo[_g->players[_g->displayplayer].readyweapon].ammo];
 
 
     // update keycard multiple widgets
     for (i=0;i<3;i++)
     {
-        _g->keyboxes[i] = _g->player.cards[i] ? i : -1;
+        _g->keyboxes[i] = _g->players[_g->displayplayer].cards[i] ? i : -1;
 
         //jff 2/24/98 select double key
         //killough 2/28/98: preserve traditional keys by config option
 
-        if (_g->player.cards[i+3])
+        if (_g->players[_g->displayplayer].cards[i+3])
             _g->keyboxes[i] = i+3;
     }
 
@@ -306,19 +306,19 @@ void ST_Ticker(void)
 {
   _g->st_randomnumber = M_Random();
   ST_updateWidgets();
-  _g->st_oldhealth = _g->player.health;
+  _g->st_oldhealth = _g->players[_g->displayplayer].health;
 }
 
 
 static void ST_doPaletteStuff(void)
 {
     int         palette;
-    int cnt = _g->player.damagecount;
+    int cnt = _g->players[_g->displayplayer].damagecount;
 
-    if (_g->player.powers[pw_strength])
+    if (_g->players[_g->displayplayer].powers[pw_strength])
     {
         // slowly fade the berzerk out
-        int bzc = 12 - (_g->player.powers[pw_strength]>>6);
+        int bzc = 12 - (_g->players[_g->displayplayer].powers[pw_strength]>>6);
         if (bzc > cnt)
             cnt = bzc;
     }
@@ -336,15 +336,15 @@ static void ST_doPaletteStuff(void)
         palette += STARTREDPALS;
     }
     else
-        if (_g->player.bonuscount)
+        if (_g->players[_g->displayplayer].bonuscount)
         {
-            palette = (_g->player.bonuscount+7)>>3;
+            palette = (_g->players[_g->displayplayer].bonuscount+7)>>3;
             if (palette >= NUMBONUSPALS)
                 palette = NUMBONUSPALS-1;
             palette += STARTBONUSPALS;
         }
         else
-            if (_g->player.powers[pw_ironfeet] > 4*32 || _g->player.powers[pw_ironfeet] & 8)
+            if (_g->players[_g->displayplayer].powers[pw_ironfeet] > 4*32 || _g->players[_g->displayplayer].powers[pw_ironfeet] & 8)
                 palette = RADIATIONPAL;
             else
                 palette = 0;
@@ -558,7 +558,7 @@ static void ST_initData(void)
     _g->st_oldhealth = -1;
 
     for (i=0;i<NUMWEAPONS;i++)
-        _g->oldweaponsowned[i] = _g->player.weaponowned[i];
+        _g->oldweaponsowned[i] = _g->players[_g->displayplayer].weaponowned[i];
 
     for (i=0;i<3;i++)
         _g->keyboxes[i] = -1;
@@ -575,7 +575,7 @@ static void ST_createWidgets(void)
 		ST_AMMOX,
 		ST_AMMOY,
 		_g->tallnum,
-        &_g->player.ammo[weaponinfo[_g->player.readyweapon].ammo],
+        &_g->players[_g->displayplayer].ammo[weaponinfo[_g->players[_g->displayplayer].readyweapon].ammo],
 		&_g->st_statusbaron,
 		ST_AMMOWIDTH );
 
@@ -584,7 +584,7 @@ static void ST_createWidgets(void)
 			ST_HEALTHX,
 			ST_HEALTHY,
 			_g->tallnum,
-            &_g->player.health,
+            &_g->players[_g->displayplayer].health,
 			&_g->st_statusbaron,
 			_g->tallpercent);
 					  
@@ -593,7 +593,7 @@ static void ST_createWidgets(void)
 			ST_ARMORX,
 			ST_ARMORY,
 			_g->tallnum,
-            &_g->player.armorpoints,
+            &_g->players[_g->displayplayer].armorpoints,
 			&_g->st_statusbaron, _g->tallpercent);
 
     // weapons owned
@@ -602,7 +602,7 @@ static void ST_createWidgets(void)
         STlib_initMultIcon(&_g->w_arms[i],
 			ST_ARMSX+(i%3)*ST_ARMSXSPACE,
 			ST_ARMSY+(i/3)*ST_ARMSYSPACE,
-            _g->arms[i], (int*) &_g->player.weaponowned[i+1],
+            _g->arms[i], (int*) &_g->players[_g->displayplayer].weaponowned[i+1],
 			&_g->st_statusbaron);
     }
 	
@@ -633,7 +633,7 @@ static void ST_createWidgets(void)
 			ST_AMMO0X,
 			ST_AMMO0Y,
 			_g->shortnum,
-            &_g->player.ammo[0],
+            &_g->players[_g->displayplayer].ammo[0],
 			&_g->st_statusbaron,
 			ST_AMMO0WIDTH);
 
@@ -641,7 +641,7 @@ static void ST_createWidgets(void)
 			ST_AMMO1X,
 			ST_AMMO1Y,
 			_g->shortnum,
-            &_g->player.ammo[1],
+            &_g->players[_g->displayplayer].ammo[1],
 			&_g->st_statusbaron,
 			ST_AMMO1WIDTH);
 
@@ -649,7 +649,7 @@ static void ST_createWidgets(void)
 			ST_AMMO2X,
 			ST_AMMO2Y,
 			_g->shortnum,
-            &_g->player.ammo[2],
+            &_g->players[_g->displayplayer].ammo[2],
 			&_g->st_statusbaron,
 			ST_AMMO2WIDTH);
 
@@ -657,7 +657,7 @@ static void ST_createWidgets(void)
 			ST_AMMO3X,
 			ST_AMMO3Y,
 			_g->shortnum,
-            &_g->player.ammo[3],
+            &_g->players[_g->displayplayer].ammo[3],
 			&_g->st_statusbaron,
 			ST_AMMO3WIDTH);
 
@@ -666,7 +666,7 @@ static void ST_createWidgets(void)
 			ST_MAXAMMO0X,
 			ST_MAXAMMO0Y,
 			_g->shortnum,
-            &_g->player.maxammo[0],
+            &_g->players[_g->displayplayer].maxammo[0],
 			&_g->st_statusbaron,
 			ST_MAXAMMO0WIDTH);
 
@@ -674,7 +674,7 @@ static void ST_createWidgets(void)
 			ST_MAXAMMO1X,
 			ST_MAXAMMO1Y,
 			_g->shortnum,
-            &_g->player.maxammo[1],
+            &_g->players[_g->displayplayer].maxammo[1],
 			&_g->st_statusbaron,
 			ST_MAXAMMO1WIDTH);
 
@@ -682,7 +682,7 @@ static void ST_createWidgets(void)
 			ST_MAXAMMO2X,
 			ST_MAXAMMO2Y,
 			_g->shortnum,
-            &_g->player.maxammo[2],
+            &_g->players[_g->displayplayer].maxammo[2],
 			&_g->st_statusbaron,
 			ST_MAXAMMO2WIDTH);
 
@@ -690,7 +690,7 @@ static void ST_createWidgets(void)
 			ST_MAXAMMO3X,
 			ST_MAXAMMO3Y,
 			_g->shortnum,
-            &_g->player.maxammo[3],
+            &_g->players[_g->displayplayer].maxammo[3],
 			&_g->st_statusbaron,
 			ST_MAXAMMO3WIDTH);
 			

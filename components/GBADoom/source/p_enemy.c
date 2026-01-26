@@ -649,16 +649,21 @@ static boolean P_IsVisible(mobj_t *actor, mobj_t *mo, boolean allaround)
 static boolean P_LookForPlayers(mobj_t *actor, boolean allaround)
 {
     player_t *player;
+    int i;
 
-    if(_g->playeringame)
+    // Look for any player in game
+    for (i = 0; i < MAXPLAYERS; i++)
     {
-        player = &_g->player;
+        if (!_g->playeringame[i])
+            continue;
+            
+        player = &_g->players[i];
 
         if (player->health <= 0)
-            return false;               // dead
+            continue;               // dead
 
         if (!P_IsVisible(actor, player->mo, allaround))
-            return false;
+            continue;
 
         P_SetTarget(&actor->target, player->mo);
 
@@ -1816,8 +1821,19 @@ void A_BossDeath(mobj_t *mo)
 
     }
 
-    if (!(_g->playeringame && _g->player.health > 0))
-        return;     // no one left alive, so do not end game
+    // Check if any player is still alive
+    {
+        int i;
+        boolean anyalive = false;
+        for (i = 0; i < MAXPLAYERS; i++) {
+            if (_g->playeringame[i] && _g->players[i].health > 0) {
+                anyalive = true;
+                break;
+            }
+        }
+        if (!anyalive)
+            return;     // no one left alive, so do not end game
+    }
 
     // scan the remaining thinkers to see
     // if all bosses are dead

@@ -673,14 +673,16 @@ void P_SpawnPlayer (int n, const mapthing_t* mthing)
   mobj_t*   mobj;
 
   // not playing?
-
-  if (!_g->playeringame)
+  if (n < 0 || n >= MAXPLAYERS)
+    return;
+    
+  if (!_g->playeringame[n])
     return;
 
-  p = &_g->player;
+  p = &_g->players[n];
 
   if (p->playerstate == PST_REBORN)
-    G_PlayerReborn (mthing->type-1);
+    G_PlayerReborn (n);
 
   /* cph 2001/08/14 - use the options field of memorised player starts to
    * indicate whether the start really exists in the level.
@@ -694,9 +696,13 @@ void P_SpawnPlayer (int n, const mapthing_t* mthing)
   mobj = P_SpawnMobj (x,y,z, MT_PLAYER);
 
   // set color translations for player sprites
+  // Player 1 is green (default), Player 2 uses indigo translation
+  if (n > 0)
+    mobj->flags |= (n << MF_TRANSSHIFT);  // Color translation for player 2
 
   mobj->angle      = ANG45 * (mthing->angle/45);
   mobj->health     = p->health;
+  // Note: GBA port doesn't have mobj->player field - use P_MobjIsPlayer() for lookup
 
   p->mo            = mobj;
   p->playerstate   = PST_LIVE;
@@ -715,7 +721,7 @@ void P_SpawnPlayer (int n, const mapthing_t* mthing)
   P_SetupPsprites (p);
 
 
-  if (mthing->type-1 == 0)
+  if (n == _g->consoleplayer)
     {
     ST_Start(); // wake up the status bar
     HU_Start(); // wake up the heads up text
@@ -794,13 +800,17 @@ void P_SpawnMapThing (const mapthing_t* mthing)
     }
 
     // check for players specially
-
-    //Only care about start spot for player 1.
-    if(mthing->type == 1)
+    // Player 1 start = thing type 1, Player 2 start = thing type 2
+    if (mthing->type >= 1 && mthing->type <= MAXPLAYERS)
     {
-        _g->playerstarts[0] = *mthing;
-        _g->playerstarts[0].options = 1;
-        P_SpawnPlayer (0, &_g->playerstarts[0]);
+        int playernum = mthing->type - 1;  // Convert to 0-based index
+        _g->playerstarts[playernum] = *mthing;
+        _g->playerstarts[playernum].options = 1;
+        
+        // Spawn this player if they're in the game
+        if (_g->playeringame[playernum]) {
+            P_SpawnPlayer(playernum, &_g->playerstarts[playernum]);
+        }
         return;
     }
 
@@ -1038,9 +1048,13 @@ void P_SpawnPlayerMissile(mobj_t* source,mobjtype_t type)
 
 struct player_s* P_MobjIsPlayer(const mobj_t* mobj)
 {
-    if(mobj == _g->player.mo)
+    // Check all players in multiplayer
+    for (int i = 0; i < MAXPLAYERS; i++)
     {
-        return &_g->player;
+        if (_g->playeringame[i] && mobj == _g->players[i].mo)
+        {
+            return &_g->players[i];
+        }
     }
 
     return NULL;

@@ -641,11 +641,23 @@ void I_InitSound(void)
   xTaskCreatePinnedToCore(&updateTask, "updateTask", 4000, NULL, 1, NULL, 1);  // Priority 1, Core 1
 #endif
 
+  printf("[SOUND] I_InitSound() ENTRY\n");
+  fflush(stdout);
+
   if((snd_card == 0) && (mus_card == 0)) {
+    printf("[SOUND] Audio cards disabled, skipping init\n");
+    fflush(stdout);
     return;
   }
 
+  printf("[SOUND] Allocating mixbuffer (%d bytes)...\n", MIXBUFFERSIZE);
+  fflush(stdout);
   mixbuffer = malloc(MIXBUFFERSIZE*sizeof(unsigned char));
+  printf("[SOUND] mixbuffer allocated at %p\n", (void*)mixbuffer);
+  fflush(stdout);
+  
+  printf("[SOUND] Installing I2S driver...\n");
+  fflush(stdout);
   static const i2s_config_t i2s_config = {
     .mode = I2S_MODE_MASTER | I2S_MODE_TX,
     .sample_rate = SAMPLERATE,
@@ -660,6 +672,8 @@ void I_InitSound(void)
 
   // Use I2S_NUM_1 for Cardputer Advanced (per M5Unified)
   i2s_driver_install(I2S_NUM_1, &i2s_config, 0, NULL);   //install and start i2s driver
+  printf("[SOUND] I2S driver installed\n");
+  fflush(stdout);
 
   // Configure I2S pins for Cardputer Advanced v1.2 with ES8311
   // Official M5Unified pinout: BCLK=GPIO41, WS=GPIO43, DOUT=GPIO42
@@ -671,12 +685,18 @@ void I_InitSound(void)
   pin_cfg.ws_io_num = 43;          // Word Select / LRCK
 
   i2s_set_pin(I2S_NUM_1, &pin_cfg);
+  printf("[SOUND] I2S pins configured\n");
+  fflush(stdout);
   
   // Initialize ES8311 codec via I2C
+  printf("[SOUND] Initializing ES8311 codec...\n");
+  fflush(stdout);
   esp_err_t codec_ret = ES8311_Init();
   if (codec_ret != ESP_OK) {
     ESP_LOGE(SOUND_TAG, "ES8311 initialization failed! Audio will not work.");
   }
+  printf("[SOUND] ES8311 codec init complete (ret=%d)\n", codec_ret);
+  fflush(stdout);
 
   //i2s_set_dac_mode(I2S_DAC_CHANNEL_LEFT_EN);  
 /*    

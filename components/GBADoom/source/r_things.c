@@ -39,6 +39,7 @@
 #include "r_things.h"
 #include "v_video.h"
 #include "lprintf.h"
+#include "info.h"
 
 #include "global_data.h"
 
@@ -262,6 +263,20 @@ static void R_InitSpriteDefs(const char * const * namelist)
 void R_InitSprites(const char * const *namelist)
 {
   R_InitSpriteDefs(namelist);
+  
+  // Multiplayer fix: Check if PLAY sprites exist
+  // If not, substitute POSS (zombieman) sprites for player visibility
+  if (_g->sprites[SPR_PLAY].numframes == 0) {
+    lprintf(LO_WARN, "R_InitSprites: PLAY sprites missing! Using POSS as fallback.\n");
+    if (_g->sprites[SPR_POSS].numframes > 0) {
+      // Copy POSS sprite data to PLAY
+      _g->sprites[SPR_PLAY] = _g->sprites[SPR_POSS];
+      lprintf(LO_INFO, "R_InitSprites: Substituted POSS sprites for PLAY (%d frames)\n", 
+              _g->sprites[SPR_PLAY].numframes);
+    } else {
+      lprintf(LO_ERROR, "R_InitSprites: POSS sprites also missing! Player rendering will fail.\n");
+    }
+  }
 }
 
 

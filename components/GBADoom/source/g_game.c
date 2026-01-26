@@ -39,6 +39,12 @@
 #include <stdarg.h>
 #include <stdlib.h>
 
+#ifdef ESP_PLATFORM
+#include "esp_err.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#endif
+
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -71,6 +77,12 @@
 #include "lprintf.h"
 #include "i_main.h"
 #include "i_system.h"
+
+#ifdef ESP_PLATFORM
+// Serial multiplayer function declarations (avoid complex include dependencies)
+extern esp_err_t Serial_SendExitLevel(int secret_exit, int next_episode, int next_map);
+extern esp_err_t Serial_CheckExitLevel(int *out_secret_exit, int *out_next_episode, int *out_next_map);
+#endif
 
 #include "global_data.h"
 
@@ -251,24 +263,24 @@ void G_BuildTiccmd(ticcmd_t* cmd)
         newweapon = change_rq;
         
         if (newweapon == wp_fist
-            && _g->player.weaponowned[wp_chainsaw]
-            && !(_g->player.readyweapon == wp_chainsaw
-            && _g->player.powers[pw_strength]))
+            && _g->players[_g->consoleplayer].weaponowned[wp_chainsaw]
+            && !(_g->players[_g->consoleplayer].readyweapon == wp_chainsaw
+            && _g->players[_g->consoleplayer].powers[pw_strength]))
         {
             newweapon = wp_chainsaw;
         }
         
         if ( (_g->gamemode == commercial)
             && newweapon == wp_shotgun 
-            && _g->player.weaponowned[wp_supershotgun]
-            && _g->player.readyweapon != wp_supershotgun)
+            && _g->players[_g->consoleplayer].weaponowned[wp_supershotgun]
+            && _g->players[_g->consoleplayer].readyweapon != wp_supershotgun)
         {
             newweapon = wp_supershotgun;
         }
         
 
-        if (_g->player.weaponowned[newweapon]
-            && newweapon != _g->player.readyweapon)
+        if (_g->players[_g->consoleplayer].weaponowned[newweapon]
+            && newweapon != _g->players[_g->consoleplayer].readyweapon)
         {
             // Do not go to plasma or BFG in shareware,
             //  even if cheated.
@@ -276,7 +288,7 @@ void G_BuildTiccmd(ticcmd_t* cmd)
             && newweapon != wp_bfg)
             || (_g->gamemode != shareware) )
             {
-            _g->player.pendingweapon = newweapon;
+            _g->players[_g->consoleplayer].pendingweapon = newweapon;
             }
         }
     }
@@ -295,17 +307,17 @@ void G_BuildTiccmd(ticcmd_t* cmd)
 
     if(_g->gamekeydown[key_use] && _g->gamekeydown[key_straferight])
     {
-        newweapon = P_WeaponCycleUp(&_g->player);
+        newweapon = P_WeaponCycleUp(&_g->players[_g->consoleplayer]);
         side -= sidemove[speed]; //Hack cancel strafe.
     }
 
     else if(_g->gamekeydown[key_use] && _g->gamekeydown[key_strafeleft])
     {
-        newweapon = P_WeaponCycleDown(&_g->player);
+        newweapon = P_WeaponCycleDown(&_g->players[_g->consoleplayer]);
         side += sidemove[speed]; //Hack cancel strafe.
     }
-    else if ((_g->player.attackdown && !P_CheckAmmo(&_g->player)))
-        newweapon = P_SwitchWeapon(&_g->player);           // phares
+    else if ((_g->players[_g->consoleplayer].attackdown && !P_CheckAmmo(&_g->players[_g->consoleplayer])))
+        newweapon = P_SwitchWeapon(&_g->players[_g->consoleplayer]);           // phares
     else
     {                                 // phares 02/26/98: Added gamemode checks
         newweapon = wp_nochange;
@@ -322,7 +334,7 @@ void G_BuildTiccmd(ticcmd_t* cmd)
         // Switch to shotgun or SSG based on preferences.
 
         {
-            const player_t *player = &_g->player;
+            const player_t *player = &_g->players[_g->consoleplayer];
 
             // only select chainsaw from '1' if it's owned, it's
             // not already in use, and the player prefers it or
@@ -385,7 +397,101 @@ static void G_DoLoadLevel (void)
     //  we look for an actual index, instead of simply
     //  setting one.
 
-    printf("G_DoLoadLevel()\n");
+    printf("G_DoLoadLevel() - Entry\n");
+    
+#ifdef ESP_PLATFORM
+    // MULTIPLAYER DETERMINISM: Full sync at level start
+    extern int is_multiplayer;
+    extern int is_master;
+    extern esp_err_t Serial_LevelReadySync(int timeout_ms);
+    extern void Serial_FlushBuffers(void);
+    extern int desync_detected;  // Use int instead of bool
+    extern esp_err_t Serial_LevelLoad3WayHandshake(int timeout_ms);
+    extern int skip_level_handshake;  // Flag to skip handshake during mismatch correction
+    
+    if (is_multiplayer) {
+        printf("=== MULTIPLAYER LEVEL SYNC START ===\n");
+        printf("%s: Beginning level load synchronization\n", is_master ? "MASTER" : "SLAVE");
+        
+        // Check if we should skip handshake (slave catching up to master's level)
+        if (skip_level_handshake) {
+            printf("%s: SKIPPING HANDSHAKE - Mismatch correction mode\n", is_master ? "MASTER" : "SLAVE");
+            skip_level_handshake = 0;  // Clear flag
+            
+            // Still do basic resets
+            Serial_FlushBuffers();
+            _g->rndindex = 0;
+            _g->prndindex = 0xED;
+            _g->gametic = 0;
+            _g->maketic = 0;
+            _g->leveltime = 0;
+            desync_detected = 0;
+            printf("=== MISMATCH CORRECTION COMPLETE - Rejoining game ===\n");
+        } else {
+            // Normal level load with full handshake
+            
+            // TASK 3: Flush UART on transitions
+            printf("%s: Flushing UART buffers...\n", is_master ? "MASTER" : "SLAVE");
+            Serial_FlushBuffers();
+        
+            // TASK 4: RNG Hard-Force - reset to deterministic state
+            // Use 0x5EED seed as per original game
+            _g->rndindex = 0;
+            _g->prndindex = 0xED;  // Low byte of 0x5EED (0xED for tic 0)
+            printf("%s: RNG HARD-FORCE - rndindex=0, prndindex=0x%02X (seed 0x5EED)\n", 
+                   is_master ? "MASTER" : "SLAVE", _g->prndindex);
+            
+            // Reset tic counters to exactly 0
+            _g->gametic = 0;
+            _g->maketic = 0;
+            _g->leveltime = 0;
+            printf("%s: Tic counters reset - gametic=0, maketic=0, leveltime=0\n", 
+                   is_master ? "MASTER" : "SLAVE");
+            
+            // TASK 2: 3-WAY HANDSHAKE for level loading
+            printf("%s: Starting 3-way handshake...\n", is_master ? "MASTER" : "SLAVE");
+            esp_err_t handshake_result = Serial_LevelLoad3WayHandshake(5000);  // 5 second timeout
+            
+            if (handshake_result != ESP_OK) {
+                printf("%s: *** 3-WAY HANDSHAKE TIMEOUT! ***\n", is_master ? "MASTER" : "SLAVE");
+                printf("%s: Game will freeze until handshake completes\n", is_master ? "MASTER" : "SLAVE");
+                // Keep trying - don't proceed without handshake
+                while (Serial_LevelLoad3WayHandshake(1000) != ESP_OK) {
+                    printf("%s: Retrying 3-way handshake...\n", is_master ? "MASTER" : "SLAVE");
+                }
+            }
+            
+            printf("%s: 3-way handshake SUCCESS - both devices synchronized\n", is_master ? "MASTER" : "SLAVE");
+            
+            // CRITICAL: Level ready sync MUST succeed before proceeding
+            printf("%s: Final level ready sync (MANDATORY)...\n", is_master ? "MASTER" : "SLAVE");
+            esp_err_t level_sync_result = Serial_LevelReadySync(5000);  // Increased timeout to 5 seconds
+            
+            if (level_sync_result != ESP_OK) {
+                printf("%s: *** LEVEL READY SYNC FAILED! Retrying... ***\n", is_master ? "MASTER" : "SLAVE");
+                // Force retry with handshake first to resync
+                Serial_FlushBuffers();
+                vTaskDelay(pdMS_TO_TICKS(100));
+                
+                // Retry 3-way handshake
+                handshake_result = Serial_LevelLoad3WayHandshake(5000);
+                if (handshake_result != ESP_OK) {
+                    printf("%s: *** RETRY FAILED - Continuing with risk of desync ***\n", is_master ? "MASTER" : "SLAVE");
+                } else {
+                    // Retry level ready sync after successful handshake retry
+                    level_sync_result = Serial_LevelReadySync(5000);
+                    if (level_sync_result != ESP_OK) {
+                        printf("%s: *** LEVEL SYNC STILL FAILED - Forcing continuation ***\n", is_master ? "MASTER" : "SLAVE");
+                    }
+                }
+            }
+            
+            // Clear desync flag
+            desync_detected = 0;
+            printf("=== LEVEL SYNC COMPLETE - Starting Tic 0 ===\n");
+        }  // end else (normal handshake path)
+    }
+#endif
 
     _g->skyflatnum = R_FlatNumForName ( SKYFLATNAME );
     printf("G_DoLoadLevel() 1\n");
@@ -426,10 +532,11 @@ static void G_DoLoadLevel (void)
 
     _g->gamestate = GS_LEVEL;
 
-
-    if (_g->playeringame && _g->player.playerstate == PST_DEAD)
-        _g->player.playerstate = PST_REBORN;
-
+    // Reset all players who died
+    for (int i = 0; i < MAXPLAYERS; i++) {
+        if (_g->playeringame[i] && _g->players[i].playerstate == PST_DEAD)
+            _g->players[i].playerstate = PST_REBORN;
+    }
 
     // initialize the msecnode_t freelist.                     phares 3/25/98
     // any nodes in the freelist are gone by now, cleared
@@ -441,16 +548,41 @@ static void G_DoLoadLevel (void)
 
 
     P_SetupLevel (_g->gameepisode, _g->gamemap, 0, _g->gameskill);
+    printf("G_DoLoadLevel: P_SetupLevel returned\n");
 
     _g->gameaction = ga_nothing;
+    printf("G_DoLoadLevel: gameaction set to ga_nothing\n");
+    
     Z_CheckHeap ();
+    printf("G_DoLoadLevel: Z_CheckHeap passed\n");
 
     // clear cmd building stuff
     memset (_g->gamekeydown, 0, sizeof(_g->gamekeydown));
 
     // killough 5/13/98: in case netdemo has consoleplayer other than green
     ST_Start();
+    printf("G_DoLoadLevel: ST_Start done\n");
+    
     HU_Start();
+    
+#ifdef ESP_PLATFORM
+    // Update network code with current level information
+    // This allows the slave to compare received position packets with current level
+    if (is_multiplayer) {
+        extern void Serial_UpdateCurrentLevel(int episode, int map);
+        Serial_UpdateCurrentLevel(_g->gameepisode, _g->gamemap);
+        printf("G_DoLoadLevel: Updated network level to E%dM%d\n", _g->gameepisode, _g->gamemap);
+    }
+    
+    // CRITICAL: Clear level mismatch data after completing level load
+    // This prevents stale EXTENDED_CHKSUM data from triggering false mismatch
+    if (is_multiplayer) {
+        extern void Serial_ClearLevelMismatch(void);
+        Serial_ClearLevelMismatch();
+        printf("G_DoLoadLevel: Cleared level mismatch data (prevent stale data issues)\n");
+    }
+#endif
+    
     printf("G_DoLoadLevel() end\n");
 }
 
@@ -499,6 +631,15 @@ boolean G_Responder (event_t* ev)
 
             if (ev->data1 <NUMKEYS)
                 _g->gamekeydown[ev->data1] = true;
+
+            // Check for level debug exit key
+            #ifdef LEVEL_DEBUG
+            if (ev->data1 == 'x' && _g->gamestate == GS_LEVEL && !_g->demoplayback)
+            {
+                G_ExitLevel();
+            }
+            #endif
+
             return true;    // eat key down events
 
         case ev_keyup:
@@ -519,12 +660,38 @@ boolean G_Responder (event_t* ev)
 
 void G_Ticker (void)
 {
+    int i;
+    
     P_MapStart();
 
-    if(_g->playeringame && _g->player.playerstate == PST_REBORN)
-        G_DoReborn (0);
+    // Check for reborn for all players
+    for (i = 0; i < MAXPLAYERS; i++) {
+        if (_g->playeringame[i] && _g->players[i].playerstate == PST_REBORN)
+            G_DoReborn(i);
+    }
 
     P_MapEnd();
+
+#ifdef ESP_PLATFORM
+    // In multiplayer, check if the other player triggered a level exit
+    // BUT: Only check after tic 50 to avoid stale packets from previous level transition
+    extern int is_multiplayer;
+    if (is_multiplayer && _g->gamestate == GS_LEVEL && _g->gametic > 50) {
+        int remote_secret_exit = 0;
+        int remote_next_episode = 0;
+        int remote_next_map = 0;
+        if (Serial_CheckExitLevel(&remote_secret_exit, &remote_next_episode, &remote_next_map) == ESP_OK) {
+            printf("NET: Remote player triggered exit (secret=%d, next=E%dM%d)\n", remote_secret_exit, remote_next_episode, remote_next_map);
+            _g->secretexit = remote_secret_exit;
+            // Store next level info for G_DoWorldDone to use
+            if (remote_next_episode > 0 && remote_next_map > 0) {
+                _g->wminfo.epsd = remote_next_episode - 1;
+                _g->wminfo.next = remote_next_map - 1;
+            }
+            _g->gameaction = ga_completed;
+        }
+    }
+#endif
 
     // do things to change the game state
     while (_g->gameaction != ga_nothing)
@@ -532,7 +699,9 @@ void G_Ticker (void)
         switch (_g->gameaction)
         {
         case ga_loadlevel:
-            _g->player.playerstate = PST_REBORN;
+            for (i = 0; i < MAXPLAYERS; i++)
+                if (_g->playeringame[i])
+                    _g->players[i].playerstate = PST_REBORN;
             G_DoLoadLevel ();
             break;
         case ga_newgame:
@@ -565,14 +734,15 @@ void G_Ticker (void)
         _g->basetic++;  // For revenant tracers and RNG -- we must maintain sync
     else
     {
-        if (_g->playeringame)
-        {
-            ticcmd_t *cmd = &_g->player.cmd;
+        // Apply ticcmds to all players in game
+        for (i = 0; i < MAXPLAYERS; i++) {
+            if (_g->playeringame[i]) {
+                ticcmd_t *cmd = &_g->players[i].cmd;
+                memcpy(cmd, &_g->netcmds[i], sizeof *cmd);
 
-            memcpy(cmd, &_g->netcmd, sizeof *cmd);
-
-            if (_g->demoplayback)
-                G_ReadDemoTiccmd (cmd);
+                if (_g->demoplayback && i == _g->consoleplayer)
+                    G_ReadDemoTiccmd(cmd);
+            }
         }
     }
 
@@ -634,7 +804,7 @@ void G_Ticker (void)
 
 static void G_PlayerFinishLevel(int player)
 {
-    player_t *p = &_g->player;
+    player_t *p = &_g->players[player];
     memset(p->powers, 0, sizeof p->powers);
     memset(p->cards, 0, sizeof p->cards);
     p->mo = NULL;           // cph - this is allocated PU_LEVEL so it's gone
@@ -658,19 +828,19 @@ void G_PlayerReborn (int player)
     int itemcount;
     int secretcount;
 
-    killcount = _g->player.killcount;
-    itemcount = _g->player.itemcount;
-    secretcount = _g->player.secretcount;
+    killcount = _g->players[player].killcount;
+    itemcount = _g->players[player].itemcount;
+    secretcount = _g->players[player].secretcount;
 
-    p = &_g->player;
+    p = &_g->players[player];
 
     int cheats = p->cheats;
     memset (p, 0, sizeof(*p));
     p->cheats = cheats;
 
-    _g->player.killcount = killcount;
-    _g->player.itemcount = itemcount;
-    _g->player.secretcount = secretcount;
+    _g->players[player].killcount = killcount;
+    _g->players[player].itemcount = itemcount;
+    _g->players[player].secretcount = secretcount;
 
     p->usedown = p->attackdown = true;  // don't do anything immediately
     p->playerstate = PST_LIVE;
@@ -709,11 +879,73 @@ const int cpars[32] = {
     120,30          // 31-32
 };
 
+#ifdef ESP_PLATFORM
+// Helper function to compute next level based on current map and exit type
+// Returns 1-based episode and map numbers
+static void G_ComputeNextLevel(int secret_exit, int *out_episode, int *out_map)
+{
+    int next_map_0based;  // 0-based map index
+    
+    if (_g->gamemode == commercial)
+    {
+        if (secret_exit)
+        {
+            switch(_g->gamemap)
+            {
+                case 15: next_map_0based = 30; break;
+                case 31: next_map_0based = 31; break;
+                default: next_map_0based = _g->gamemap; break;
+            }
+        }
+        else
+        {
+            switch(_g->gamemap)
+            {
+                case 31:
+                case 32: next_map_0based = 15; break;
+                default: next_map_0based = _g->gamemap; break;
+            }
+        }
+        *out_episode = 1;  // Commercial DOOM doesn't use episodes
+        *out_map = next_map_0based + 1;  // Convert to 1-based
+    }
+    else
+    {
+        if (secret_exit)
+        {
+            next_map_0based = 8;  // Secret level is map 9 (0-based: 8)
+        }
+        else if (_g->gamemap == 9)
+        {
+            // Returning from secret level
+            switch (_g->gameepisode)
+            {
+                case 1: next_map_0based = 3; break;
+                case 2: next_map_0based = 5; break;
+                case 3: next_map_0based = 6; break;
+                case 4: next_map_0based = 2; break;
+                default: next_map_0based = _g->gamemap; break;
+            }
+        }
+        else
+        {
+            next_map_0based = _g->gamemap;  // gamemap is 1-based, next is 0-based, so this advances by 1
+        }
+        *out_episode = _g->gameepisode;  // Episode stays the same
+        *out_map = next_map_0based + 1;   // Convert to 1-based
+    }
+    
+    printf("G_ComputeNextLevel: secret=%d, current E%dM%d -> next E%dM%d\n",
+           secret_exit, _g->gameepisode, _g->gamemap, *out_episode, *out_map);
+}
+#endif
+
 
 void G_ExitLevel (void)
 {
     _g->secretexit = false;
     _g->gameaction = ga_completed;
+    
 }
 
 // Here's for the german edition.
@@ -726,26 +958,44 @@ void G_SecretExitLevel (void)
     else
         _g->secretexit = false;
     _g->gameaction = ga_completed;
+    
 }
 
 //
 // G_DoCompleted
 //
 
+// Flag to indicate wminfo was already set by network EXIT_LEVEL packet
+// When true, G_DoCompleted should NOT recalculate wminfo.next
+// NOT static - needs to be accessible from d_client.c
+int wminfo_set_by_network = 0;
+
 void G_DoCompleted (void)
 {
+    int i;
     _g->gameaction = ga_nothing;
 
-    if (_g->playeringame)
-        G_PlayerFinishLevel(0);        // take away cards and stuff
+    for (i = 0; i < MAXPLAYERS; i++)
+        if (_g->playeringame[i])
+            G_PlayerFinishLevel(i);        // take away cards and stuff
 
     if (_g->automapmode & am_active)
         AM_Stop();
 
     if (_g->gamemode != commercial && _g->gamemap == 9) // kilough 2/7/98
-        _g->player.didsecret = true;
+        _g->players[_g->consoleplayer].didsecret = true;
 
-    _g->wminfo.didsecret = _g->player.didsecret;
+    _g->wminfo.didsecret = _g->players[_g->consoleplayer].didsecret;
+    
+    // If wminfo was already set by network EXIT_LEVEL, skip recalculating
+    if (wminfo_set_by_network) {
+        printf("G_DoCompleted: Using network-provided wminfo (epsd=%d, next=%d)\n",
+               _g->wminfo.epsd, _g->wminfo.next);
+        wminfo_set_by_network = 0;  // Clear the flag
+        _g->wminfo.last = _g->gamemap - 1;
+        goto skip_wminfo_calc;
+    }
+    
     _g->wminfo.epsd = _g->gameepisode -1;
     _g->wminfo.last = _g->gamemap -1;
 
@@ -807,14 +1057,18 @@ void G_DoCompleted (void)
     else
         _g->wminfo.partime = TICRATE*pars[_g->gameepisode][_g->gamemap];
 
-    _g->wminfo.pnum = 0;
+    _g->wminfo.pnum = _g->consoleplayer;
 
-
-    _g->wminfo.plyr[0].in = _g->playeringame;
-    _g->wminfo.plyr[0].skills = _g->player.killcount;
-    _g->wminfo.plyr[0].sitems = _g->player.itemcount;
-    _g->wminfo.plyr[0].ssecret = _g->player.secretcount;
-    _g->wminfo.plyr[0].stime = _g->leveltime;
+    // Fill in stats for all players
+    for (i = 0; i < MAXPLAYERS; i++) {
+        _g->wminfo.plyr[i].in = _g->playeringame[i];
+        if (_g->playeringame[i]) {
+            _g->wminfo.plyr[i].skills = _g->players[i].killcount;
+            _g->wminfo.plyr[i].sitems = _g->players[i].itemcount;
+            _g->wminfo.plyr[i].ssecret = _g->players[i].secretcount;
+            _g->wminfo.plyr[i].stime = _g->leveltime;
+        }
+    }
 
     /* cph - modified so that only whole seconds are added to the totalleveltimes
    *  value; so our total is compatible with the "naive" total of just adding
@@ -822,6 +1076,21 @@ void G_DoCompleted (void)
    *  will agree with Compet-n.
    */
     _g->wminfo.totaltimes = (_g->totalleveltimes += (_g->leveltime - _g->leveltime%35));
+
+skip_wminfo_calc:  // Jump here if wminfo was set by network
+
+#ifdef ESP_PLATFORM
+    // Skip intermission in multiplayer to avoid desync
+    extern int is_multiplayer;
+    if (is_multiplayer) {
+        printf("G_DoCompleted: Multiplayer - skipping intermission, going directly to next level (next=%d)\n", _g->wminfo.next);
+        // Immediately transition to next level
+        _g->gameaction = ga_worlddone;
+        return;
+    } else {
+        printf("G_DoCompleted: Single player - showing intermission\n");
+    }
+#endif
 
     _g->gamestate = GS_INTERMISSION;
     _g->automapmode &= ~am_active;
@@ -848,7 +1117,7 @@ void G_WorldDone (void)
     _g->gameaction = ga_worlddone;
 
     if (_g->secretexit)
-        _g->player.didsecret = true;
+        _g->players[_g->consoleplayer].didsecret = true;
 
     if (_g->gamemode == commercial)
     {
@@ -906,7 +1175,8 @@ void G_LoadGame (int slot, boolean is_cmd)
 { 
     printf("G_LoadGame(%d)\n", slot);
     sprintf (savename,"/sd/doom/DOOM%d.dsg", slot);
-    _g->gameaction = ga_loadgame; 
+    _g->gameaction = ga_loadgame;
+    _g->advancedemo = false;  // Clear demo advance flag to prevent race condition
 } 
  
 #define VERSIONSIZE		16 
@@ -981,7 +1251,7 @@ void G_DoLoadGame (void)
     rb(&_g->gameskill);
     rb(&_g->gameepisode);
     rb(&_g->gamemap);
-    rb(&_g->playeringame);
+    rb(&_g->playeringame[0]);  // Load single-player save
 
     // load a base level 
     G_InitNew (_g->gameskill, _g->gameepisode, _g->gamemap); 
@@ -1021,7 +1291,7 @@ void G_DoLoadGame (void)
 
 
     printf("crash here?\n");
-    printf("player cheats: %d\n", _g->player.cheats);
+    printf("player cheats: %d\n", _g->players[_g->consoleplayer].cheats);
     printf("nope\n");
     // done 
     //Z_Free (_g->savebuffer); 
@@ -1056,7 +1326,7 @@ void G_DoSaveGame (boolean menu)
     int		i; 
     
     
-	printf("G_DoSaveGame()\n");
+	printf("G_SaveGame()\n");
 	sprintf (name,"/sd/doom/DOOM%d.dsg",_g->savegameslot); 
     description = savedescription; 
     //save_p = _g->savebuffer = Z_Malloc(20000, PU_STATIC, 0); 
@@ -1089,7 +1359,7 @@ void G_DoSaveGame (boolean menu)
     wb(_g->gameskill); 
     wb(_g->gameepisode); 
     wb(_g->gamemap); 
-	wb(_g->playeringame); 
+	wb(_g->playeringame[0]);  // Save single-player state
     wb(_g->leveltime>>16); 
     wb(_g->leveltime>>8); 
     wb(_g->leveltime); 
@@ -1172,6 +1442,7 @@ void G_DeferedInitNew(skill_t skill, int episode, int map)
     _g->d_episode = episode;
     _g->d_map = map;
     _g->gameaction = ga_newgame;
+    _g->advancedemo = false;  // Clear demo advance flag to prevent race condition
 }
 
 // killough 3/1/98: function to reload all the default parameter
@@ -1231,11 +1502,29 @@ void G_InitNew(skill_t skill, int episode, int map)
     if (map > 9 && _g->gamemode != commercial)
         map = 9;
 
+    // Clear RNG - CRITICAL for multiplayer determinism!
+    // Both machines must start with identical prndindex = 0
     M_ClearRandom();
+    
+#ifdef ESP_PLATFORM
+    // Multiplayer: Flush UART buffers before starting to prevent ghost inputs
+    extern int is_multiplayer;
+    extern void Serial_FlushBuffers(void);
+    if (is_multiplayer) {
+        Serial_FlushBuffers();
+        printf("G_InitNew: Buffers flushed, RNG reset for multiplayer sync\n");
+    }
+#endif
 
     _g->respawnmonsters = skill == sk_nightmare;
 
-    _g->player.playerstate = PST_REBORN;
+    // Set playerstate to PST_REBORN for all players in game (necessary for multiplayer)
+    for (int i = 0; i < MAXPLAYERS; i++) {
+        if (_g->playeringame[i]) {
+            _g->players[i].playerstate = PST_REBORN;
+            _g->players[i].health = initial_health;
+        }
+    }
 
     _g->usergame = true;                // will be set false if a demo
     _g->automapmode &= ~am_active;
@@ -1245,7 +1534,9 @@ void G_InitNew(skill_t skill, int episode, int map)
 
     _g->totalleveltimes = 0; // cph
 
+    printf("G_InitNew: calling G_DoLoadLevel\n");
     G_DoLoadLevel ();
+    printf("G_InitNew: G_DoLoadLevel returned, menuactive=%d\n", _g->menuactive);
 }
 
 //
@@ -1458,15 +1749,17 @@ static const byte* G_ReadDemoHeader(const byte *demo_p, size_t size, boolean fai
     if (CheckForOverrun(header_p, demo_p, size, MAXPLAYERS, failonerror))
         return NULL;
 
-    _g->playeringame = *demo_p++;
-    demo_p += MIN_MAXPLAYERS - MAXPLAYERS;
+    // Read playeringame states from demo - demo format stores MIN_MAXPLAYERS (32) entries
+    // We only care about MAXPLAYERS (2) - read those and skip the rest
+    for (int i = 0; i < MAXPLAYERS; i++) {
+        _g->playeringame[i] = *demo_p++;
+    }
+    demo_p += MIN_MAXPLAYERS - MAXPLAYERS;  // Skip remaining player slots
 
 
     if (_g->gameaction != ga_loadgame) { /* killough 12/98: support -loadgame */
         G_InitNew(skill, episode, map);
     }
-
-    _g->player.cheats = 0;
 
     return demo_p;
 }
@@ -1525,4 +1818,3 @@ boolean G_CheckDemoStatus (void)
     }
     return false;
 }
-
