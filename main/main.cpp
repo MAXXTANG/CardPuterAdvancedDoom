@@ -312,6 +312,7 @@ extern "C" int doom_main(int argc, const char * argv);
 #include "doom_iwad.h"
 #include "rgb_led.h"
 #include "i_net_serial.h"
+#include "version.h"
 
 extern const unsigned char doom_iwad_builtin[4697587UL];
 
@@ -335,6 +336,88 @@ void canvas_init()
     doom_canvas->createPalette();
     doom_canvas->createSprite(240, 160);
     __sprite_data = (unsigned short*)doom_canvas->getBuffer();
+}
+
+// Splash screen function - displays version info and waits for any key
+bool show_splash_screen(void)
+{
+    LGFX_Cardputer* display = (LGFX_Cardputer*)doom_canvas->getParent();
+    
+    // Clear screen to black
+    display->fillScreen(TFT_BLACK);
+    
+    // Version in top left (grey)
+    display->setTextColor(0x7BEF); // Grey RGB565
+    display->setTextSize(1);
+    display->setCursor(5, 5);
+    display->print("Version: " VERSION_STRING);
+    
+    // Large centered "Cardputer ADV Doom" in yellow
+    display->setTextColor(TFT_YELLOW, TFT_BLACK);
+    display->setTextSize(3);
+    display->setTextDatum(TC_DATUM); // Top-center alignment for multi-line centering
+    
+    // Calculate vertical positions
+    int center_x = display->width() / 2;
+    int current_y = 40;
+    
+    // Split title into two lines if needed, but we'll fit in one line
+    display->drawString("Cardputer", center_x, current_y);
+    current_y += 30;
+    display->drawString("ADV Doom", center_x, current_y);
+    current_y += 40;
+    
+    // "Created by Szilamer" in white
+    display->setTextColor(TFT_WHITE, TFT_BLACK);
+    display->setTextSize(2);
+    display->drawString("Created by Szilamer", center_x, current_y);
+    current_y += 25;
+    
+    // "Tested by: Tommy P. and Andrew P." in white
+    display->setTextSize(1);
+    display->drawString("Tested by: Tommy P.", center_x, current_y);
+    current_y += 15;
+    display->drawString("and Andrew P.", center_x, current_y);
+    current_y += 30;
+    
+    // "Press any key to continue" in green at bottom
+    display->setTextColor(TFT_GREEN, TFT_BLACK);
+    display->setTextSize(1);
+    display->drawString("Press any key to continue", center_x, display->height() - 20);
+    
+    // Reset text datum to default (top-left)
+    display->setTextDatum(TL_DATUM);
+    
+    // Wait for any key press (key down event)
+    printf("Splash screen: waiting for any key press...\n");
+    uint32_t start_time = millis();
+    const uint32_t timeout_ms = 30000; // 30 second timeout
+    
+    while (1) {
+        // Check for timeout
+        if (millis() - start_time >= timeout_ms) {
+            printf("Splash screen timeout, continuing...\n");
+            return true; // Continue anyway
+        }
+        
+        // Update keyboard and check for events
+        keyboard_update();
+        uint8_t evt = __get_event();
+        
+        if (evt != 0) {
+            bool key_down = (evt & 0x80) != 0;
+            if (key_down) {
+                printf("Key pressed, continuing to NET? screen\n");
+                // Brief visual feedback
+                display->fillRect(0, display->height() - 10, display->width(), 10, TFT_GREEN);
+                vTaskDelay(pdMS_TO_TICKS(100));
+                display->fillScreen(TFT_BLACK);
+                return true;
+            }
+        }
+        
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
 }
 
 extern "C" void init_wad(void)
@@ -516,6 +599,9 @@ extern "C" void app_main(void)
     canvas_init();
 
     init_wad();
+    
+    // Show splash screen (version info, credits) and wait for any key
+    show_splash_screen();
     
     // Multiplayer role selection (UART Serial - NO WiFi overhead)
     bool mp_enabled = multiplayer_role_selection();
