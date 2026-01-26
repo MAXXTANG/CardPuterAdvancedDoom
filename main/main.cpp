@@ -357,33 +357,25 @@ bool show_splash_screen(void)
     display->setTextSize(3);
     display->setTextDatum(TC_DATUM); // Top-center alignment for multi-line centering
     
-    // Calculate vertical positions
+    // Calculate vertical positions (adjusted for 135px screen height)
     int center_x = display->width() / 2;
-    int current_y = 40;
+    int current_y = 30;  // Start a bit higher
     
-    // Split title into two lines if needed, but we'll fit in one line
+    // Split title into two lines
     display->drawString("Cardputer", center_x, current_y);
-    current_y += 30;
+    current_y += 25;  // Reduced spacing
     display->drawString("ADV Doom", center_x, current_y);
-    current_y += 40;
+    current_y += 35;  // Reduced spacing
     
-    // "Created by Szilamer" in white
+    // "Created by Szilamer" in white (same size as version)
     display->setTextColor(TFT_WHITE, TFT_BLACK);
-    display->setTextSize(2);
+    display->setTextSize(1);
     display->drawString("Created by Szilamer", center_x, current_y);
-    current_y += 25;
-    
-    // "Tested by: Tommy P. and Andrew P." in white
-    display->setTextSize(1);
-    display->drawString("Tested by: Tommy P.", center_x, current_y);
     current_y += 15;
-    display->drawString("and Andrew P.", center_x, current_y);
-    current_y += 30;
     
-    // "Press any key to continue" in green at bottom
-    display->setTextColor(TFT_GREEN, TFT_BLACK);
-    display->setTextSize(1);
-    display->drawString("Press any key to continue", center_x, display->height() - 20);
+    // "Tested by: Tommy P. and Andrew P." on one line to save space
+    display->drawString("Tested by: Tommy P. and Andrew P.", center_x, current_y);
+    current_y += 15;
     
     // Reset text datum to default (top-left)
     display->setTextDatum(TL_DATUM);
@@ -408,9 +400,7 @@ bool show_splash_screen(void)
             bool key_down = (evt & 0x80) != 0;
             if (key_down) {
                 printf("Key pressed, continuing to NET? screen\n");
-                // Brief visual feedback
-                display->fillRect(0, display->height() - 10, display->width(), 10, TFT_GREEN);
-                vTaskDelay(pdMS_TO_TICKS(100));
+                // Brief visual feedback (optional)
                 display->fillScreen(TFT_BLACK);
                 return true;
             }
