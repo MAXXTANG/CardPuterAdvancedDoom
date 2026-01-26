@@ -80,8 +80,6 @@
 
 #ifdef ESP_PLATFORM
 // Serial multiplayer function declarations (avoid complex include dependencies)
-extern esp_err_t Serial_SendExitLevel(int secret_exit, int next_episode, int next_map);
-extern esp_err_t Serial_CheckExitLevel(int *out_secret_exit, int *out_next_episode, int *out_next_map);
 #endif
 
 #include "global_data.h"
@@ -672,26 +670,6 @@ void G_Ticker (void)
 
     P_MapEnd();
 
-#ifdef ESP_PLATFORM
-    // In multiplayer, check if the other player triggered a level exit
-    // BUT: Only check after tic 50 to avoid stale packets from previous level transition
-    extern int is_multiplayer;
-    if (is_multiplayer && _g->gamestate == GS_LEVEL && _g->gametic > 50) {
-        int remote_secret_exit = 0;
-        int remote_next_episode = 0;
-        int remote_next_map = 0;
-        if (Serial_CheckExitLevel(&remote_secret_exit, &remote_next_episode, &remote_next_map) == ESP_OK) {
-            printf("NET: Remote player triggered exit (secret=%d, next=E%dM%d)\n", remote_secret_exit, remote_next_episode, remote_next_map);
-            _g->secretexit = remote_secret_exit;
-            // Store next level info for G_DoWorldDone to use
-            if (remote_next_episode > 0 && remote_next_map > 0) {
-                _g->wminfo.epsd = remote_next_episode - 1;
-                _g->wminfo.next = remote_next_map - 1;
-            }
-            _g->gameaction = ga_completed;
-        }
-    }
-#endif
 
     // do things to change the game state
     while (_g->gameaction != ga_nothing)
@@ -879,66 +857,6 @@ const int cpars[32] = {
     120,30          // 31-32
 };
 
-#ifdef ESP_PLATFORM
-// Helper function to compute next level based on current map and exit type
-// Returns 1-based episode and map numbers
-static void G_ComputeNextLevel(int secret_exit, int *out_episode, int *out_map)
-{
-    int next_map_0based;  // 0-based map index
-    
-    if (_g->gamemode == commercial)
-    {
-        if (secret_exit)
-        {
-            switch(_g->gamemap)
-            {
-                case 15: next_map_0based = 30; break;
-                case 31: next_map_0based = 31; break;
-                default: next_map_0based = _g->gamemap; break;
-            }
-        }
-        else
-        {
-            switch(_g->gamemap)
-            {
-                case 31:
-                case 32: next_map_0based = 15; break;
-                default: next_map_0based = _g->gamemap; break;
-            }
-        }
-        *out_episode = 1;  // Commercial DOOM doesn't use episodes
-        *out_map = next_map_0based + 1;  // Convert to 1-based
-    }
-    else
-    {
-        if (secret_exit)
-        {
-            next_map_0based = 8;  // Secret level is map 9 (0-based: 8)
-        }
-        else if (_g->gamemap == 9)
-        {
-            // Returning from secret level
-            switch (_g->gameepisode)
-            {
-                case 1: next_map_0based = 3; break;
-                case 2: next_map_0based = 5; break;
-                case 3: next_map_0based = 6; break;
-                case 4: next_map_0based = 2; break;
-                default: next_map_0based = _g->gamemap; break;
-            }
-        }
-        else
-        {
-            next_map_0based = _g->gamemap;  // gamemap is 1-based, next is 0-based, so this advances by 1
-        }
-        *out_episode = _g->gameepisode;  // Episode stays the same
-        *out_map = next_map_0based + 1;   // Convert to 1-based
-    }
-    
-    printf("G_ComputeNextLevel: secret=%d, current E%dM%d -> next E%dM%d\n",
-           secret_exit, _g->gameepisode, _g->gamemap, *out_episode, *out_map);
-}
-#endif
 
 
 void G_ExitLevel (void)

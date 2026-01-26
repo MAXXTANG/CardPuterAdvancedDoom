@@ -40,6 +40,7 @@ extern int is_master;
 #define NET_PKT_GO                0x0C  // Master tells slave to go
 #define NET_PKT_EXTENDED_CHKSUM   0x0D  // Extended checksum with full player state
 #define NET_PKT_STARTUP_READY     0x0E  // Both devices ready to enter doom_main
+#define NET_PKT_SLAVE_LEVEL       0x0F  // Slave's current level (episode/map)
 
 /**
  * @brief Initialize UART for multiplayer

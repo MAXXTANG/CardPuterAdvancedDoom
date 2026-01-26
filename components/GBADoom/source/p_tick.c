@@ -189,22 +189,6 @@ void P_Ticker (void)
   if (is_multiplayer) {
     _g->prndindex = (0xED + _g->leveltime) & 0xff;
   }
-  if (is_multiplayer && _g->gamestate == GS_LEVEL && _g->leveltime > 50) {
-    int remote_secret_exit = 0;
-    int remote_next_episode = 0;
-    int remote_next_map = 0;
-    if (Serial_CheckExitLevel(&remote_secret_exit, &remote_next_episode, &remote_next_map) == ESP_OK) {
-      printf("NET: Remote player triggered exit (secret=%d, next=E%dM%d) at tic %d\n", 
-             remote_secret_exit, remote_next_episode, remote_next_map, _g->leveltime);
-      _g->secretexit = remote_secret_exit;
-      // Store next level info for G_DoWorldDone
-      if (remote_next_episode > 0 && remote_next_map > 0) {
-        _g->wminfo.epsd = remote_next_episode - 1;
-        _g->wminfo.next = remote_next_map - 1;
-      }
-      _g->gameaction = ga_completed;
-    }
-  }
 #endif
 
   /* pause if in menu and at least one tic has been run

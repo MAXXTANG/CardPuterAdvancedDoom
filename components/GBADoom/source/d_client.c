@@ -89,7 +89,6 @@ extern void Serial_FlushBuffers(void);
 extern int Serial_SendChecksum(int tic, int player0_x, int player0_y);
 extern int Serial_CheckChecksum(int *out_tic, int *out_x, int *out_y);
 extern int desync_detected;
-extern esp_err_t Serial_CheckExitLevel(int *out_secret_exit, int *out_next_episode, int *out_next_map);
 extern esp_err_t Serial_CheckHandshakePackets(void);
 
 // Flag to tell G_DoCompleted not to overwrite wminfo (defined in g_game.c)
