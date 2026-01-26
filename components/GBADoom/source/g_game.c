@@ -80,6 +80,8 @@
 
 #ifdef ESP_PLATFORM
 // Serial multiplayer function declarations (avoid complex include dependencies)
+extern int is_multiplayer;
+extern int is_master;
 #endif
 
 #include "global_data.h"
@@ -668,6 +670,21 @@ void G_Ticker (void)
             G_DoReborn(i);
     }
 
+    // Check for dead players who want to respawn in multiplayer
+    for (i = 0; i < MAXPLAYERS; i++) {
+        if (_g->playeringame[i] && _g->players[i].playerstate == PST_DEAD) {
+            ticcmd_t *cmd = &_g->players[i].cmd;
+            if (cmd->buttons & BT_USE) {
+                // For multiplayer, respawn immediately
+#ifdef ESP_PLATFORM
+                if (is_multiplayer) {
+                    G_DoReborn(i);
+                }
+#endif
+            }
+        }
+    }
+
     P_MapEnd();
 
 
@@ -836,8 +853,64 @@ void G_PlayerReborn (int player)
 // G_DoReborn
 //
 
+// ============================================================================
+// Multiplayer Player Respawn Handling
+// ============================================================================
+//
+// G_MultiplayerRespawn
+// Respawns a dead player at their starting position in multiplayer mode
+// Called when a dead player presses the Use button
+//
+static void G_MultiplayerRespawn(int player)
+{
+    player_t* p = &_g->players[player];
+    
+    printf("G_MultiplayerRespawn: Respawning player %d in multiplayer\n", player);
+    
+    // Reset player state similar to G_PlayerReborn but keep kill/secret counts
+    int killcount = p->killcount;
+    int itemcount = p->itemcount;
+    int secretcount = p->secretcount;
+    int cheats = p->cheats;
+    
+    memset(p, 0, sizeof(*p));
+    p->cheats = cheats;
+    p->killcount = killcount;
+    p->itemcount = itemcount;
+    p->secretcount = secretcount;
+    
+    p->usedown = p->attackdown = true;
+    p->playerstate = PST_LIVE;
+    p->health = 100;  // Full health on respawn
+    p->readyweapon = p->pendingweapon = wp_pistol;
+    p->weaponowned[wp_fist] = true;
+    p->weaponowned[wp_pistol] = true;
+    p->ammo[am_clip] = 50;  // Default ammo
+    
+    // Set max ammo
+    for (int i = 0; i < NUMAMMO; i++) {
+        p->maxammo[i] = maxammo[i];
+    }
+    
+    // Get the player's starting position from the map
+    if (player >= 0 && player < MAXPLAYERS) {
+        printf("G_MultiplayerRespawn: Spawning player %d at start position\n", player);
+        P_SpawnPlayer(player, &_g->playerstarts[player]);
+    }
+    
+    printf("G_MultiplayerRespawn: Player %d respawned with health %d\n", player, p->health);
+}
+
 void G_DoReborn (int playernum)
 {
+#ifdef ESP_PLATFORM
+    // In multiplayer, don't reload the entire level - just respawn the player
+    if (is_multiplayer) {
+        // Actually respawn the player immediately
+        G_MultiplayerRespawn(playernum);
+        return;
+    }
+#endif
     _g->gameaction = ga_loadlevel;      // reload the level from scratch
 }
 
