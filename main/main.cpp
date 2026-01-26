@@ -40,10 +40,24 @@ extern "C" void __set_sprite_pallete(unsigned int i, unsigned char r, unsigned c
 #include <freertos/event_groups.h>
 #include <driver/gpio.h>
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "tca8418.h"
 #include <queue>
 
 #define KEY_TAG "KEYBOARD"
+
+// TFT Color definitions (RGB565)
+#define TFT_BLACK   0x0000
+#define TFT_WHITE   0xFFFF
+#define TFT_RED     0xF800
+#define TFT_GREEN   0x07E0
+#define TFT_BLUE    0x001F
+#define TFT_YELLOW  0xFFE0
+
+// Helper function for millis()
+static inline uint32_t millis() {
+    return (uint32_t)(esp_timer_get_time() / 1000ULL);
+}
 
 #define BOARD_IIC_BUS_PORT                  I2C_NUM_0
 #define BOARD_IIC_BUS_SDA                   GPIO_NUM_8
@@ -296,6 +310,8 @@ extern "C" unsigned char __get_event() {
 extern "C" int doom_main(int argc, const char * argv);
 
 #include "doom_iwad.h"
+#include "rgb_led.h"
+#include "i_net_serial.h"
 
 extern const unsigned char doom_iwad_builtin[4697587UL];
 
@@ -327,6 +343,170 @@ extern "C" void init_wad(void)
     doom_iwad_len = sizeof(doom_iwad_builtin);
 }
 
+// Multiplayer role selection UI (UART Serial version - NO WiFi)
+bool multiplayer_role_selection(void)
+{
+    LGFX_Cardputer* display = (LGFX_Cardputer*)doom_canvas->getParent();
+    
+    // Initialize RGB LED
+    rgb_led_init();
+    rgb_led_set_mode(LED_SOLID_YELLOW);
+    
+    // Clear screen to dark grey
+    display->fillScreen(0x4208); // Dark grey RGB565
+    
+    // Draw large yellow "NET?"
+    display->setTextColor(TFT_YELLOW, 0x4208);
+    display->setTextSize(4);
+    display->setCursor(80, 40);
+    display->print("NET?");
+    
+    // Instructions
+    display->setTextSize(1);
+    display->setCursor(10, 100);
+    display->setTextColor(TFT_WHITE, 0x4208);
+    display->print("M=Master  S=Slave  Enter=Single");
+    display->setCursor(40, 115);
+    display->print("(Connect Grove cable first)");
+    
+    // Progress bar at bottom
+    const int bar_width = 200;
+    const int bar_height = 10;
+    const int bar_x = 20;
+    const int bar_y = 130;
+    
+    uint32_t start_time = millis();
+    uint32_t timeout_ms = 10000; // 10 seconds
+    
+    bool mode_selected = false;
+    
+    while (!mode_selected) {
+        uint32_t elapsed = millis() - start_time;
+        if (elapsed >= timeout_ms) {
+            // Timeout - single player
+            display->fillScreen(0x0000); // Black
+            rgb_led_set_mode(LED_OFF);
+            return false;
+        }
+        
+        // Update progress bar
+        int progress = (elapsed * bar_width) / timeout_ms;
+        display->fillRect(bar_x, bar_y, progress, bar_height, TFT_YELLOW);
+        
+        // Check for key press
+        keyboard_update();
+        uint8_t evt = __get_event();
+        
+        if (evt != 0) {
+            bool key_down = (evt & 0x80) != 0;
+            char key = evt & 0x7F;
+            
+            if (key_down) {
+                if (key == 'M' || key == 'm') {
+                    // Master mode - set globals BEFORE init
+                    is_multiplayer = true;
+                    is_master = true;
+                    
+                    display->fillScreen(0x0000);
+                    display->setTextColor(TFT_BLUE, 0x0000);
+                    display->setTextSize(6);
+                    display->setCursor(70, 60);
+                    display->print("M");
+                    rgb_led_set_mode(LED_SOLID_BLUE);
+                    
+                    // Initialize UART with software crossover
+                    if (serial_net_init() == ESP_OK) {
+                        display->setTextSize(2);
+                        display->setCursor(30, 120);
+                        display->print("Syncing...");
+                        
+                        if (serial_net_handshake(5000) == ESP_OK) {
+                            // Success - flash green
+                            display->fillScreen(0x07E0); // Green
+                            rgb_led_set_mode(LED_SOLID_GREEN);
+                            vTaskDelay(pdMS_TO_TICKS(1000));
+                            display->fillScreen(0x0000);
+                            return true;
+                        } else {
+                            // Failed
+                            display->fillScreen(TFT_RED);
+                            display->setTextSize(2);
+                            display->setCursor(20, 60);
+                            display->print("SYNC FAIL");
+                            display->setTextSize(1);
+                            display->setCursor(20, 90);
+                            display->print("Check Grove cable!");
+                            vTaskDelay(pdMS_TO_TICKS(2000));
+                            display->fillScreen(0x0000);
+                            rgb_led_set_mode(LED_OFF);
+                            serial_net_deinit();
+                            is_multiplayer = false;
+                            return false;
+                        }
+                    }
+                    is_multiplayer = false;
+                    return false;
+                    
+                } else if (key == 'S' || key == 's') {
+                    // Slave mode - set globals BEFORE init
+                    is_multiplayer = true;
+                    is_master = false;
+                    
+                    display->fillScreen(0x0000);
+                    display->setTextColor(TFT_BLUE, 0x0000);
+                    display->setTextSize(6);
+                    display->setCursor(70, 60);
+                    display->print("S");
+                    rgb_led_set_mode(LED_SOLID_BLUE);
+                    
+                    // Initialize UART with software crossover
+                    if (serial_net_init() == ESP_OK) {
+                        display->setTextSize(2);
+                        display->setCursor(30, 120);
+                        display->print("Waiting...");
+                        
+                        if (serial_net_handshake(10000) == ESP_OK) {
+                            // Success - flash green
+                            display->fillScreen(0x07E0); // Green
+                            rgb_led_set_mode(LED_SOLID_GREEN);
+                            vTaskDelay(pdMS_TO_TICKS(1000));
+                            display->fillScreen(0x0000);
+                            return true;
+                        } else {
+                            // Failed
+                            display->fillScreen(TFT_RED);
+                            display->setTextSize(2);
+                            display->setCursor(20, 60);
+                            display->print("SYNC FAIL");
+                            display->setTextSize(1);
+                            display->setCursor(20, 90);
+                            display->print("Check Grove cable!");
+                            vTaskDelay(pdMS_TO_TICKS(2000));
+                            display->fillScreen(0x0000);
+                            rgb_led_set_mode(LED_OFF);
+                            serial_net_deinit();
+                            is_multiplayer = false;
+                            return false;
+                        }
+                    }
+                    is_multiplayer = false;
+                    return false;
+                    
+                } else if (key == '\r' || key == '\n') {
+                    // Enter - single player
+                    display->fillScreen(0x0000);
+                    rgb_led_set_mode(LED_OFF);
+                    return false;
+                }
+            }
+        }
+        
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+    
+    return false;
+}
+
 extern "C" void app_main(void)
 {
     memcheck("Start");
@@ -336,7 +516,48 @@ extern "C" void app_main(void)
     canvas_init();
 
     init_wad();
+    
+    // Multiplayer role selection (UART Serial - NO WiFi overhead)
+    bool mp_enabled = multiplayer_role_selection();
+    
+    if (mp_enabled) {
+        printf("=== MULTIPLAYER MODE (%s) via UART Serial ===\n", is_master ? "MASTER" : "SLAVE");
+        
+        // Log memory - should be nearly full heap since NO WiFi!
+        uint32_t free_heap = esp_get_free_heap_size();
+        uint32_t max_block = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+        printf("[MP] Free heap: %lu bytes\n", free_heap);
+        printf("[MP] Largest free block: %lu bytes\n", max_block);
+        printf("[MP] UART uses minimal RAM - full heap available for Doom!\n");
+        fflush(stdout);
+        
+        // Cleanup RGB LED task to reclaim 2KB stack memory
+        rgb_led_cleanup();
 
-    printf("Launch DOOM\n");
+        // Pre-game startup sync: wait for both devices before entering doom_main
+        if (Serial_StartupSync(5000) != ESP_OK) {
+            printf("STARTUP SYNC FAILED - continuing anyway (risk of desync)\n");
+        }
+        
+    } else {
+        printf("=== SINGLE PLAYER MODE ===\n");
+        
+        // Cleanup LED task even in single player mode
+        rgb_led_cleanup();
+    }
+    
+    // Final memory check before doom_main()
+    printf(">>> Final Memory Check <<<\n");
+    uint32_t free_heap = esp_get_free_heap_size();
+    uint32_t max_block = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
+    printf("Free heap before doom_main(): %lu bytes\n", free_heap);
+    printf("Largest free block: %lu bytes\n", max_block);
+    fflush(stdout);
+
+    printf(">>> Calling doom_main() <<<\n");
+    fflush(stdout);
     doom_main(0, 0);
+    
+    // doom_main() should never return
+    printf("ERROR: doom_main() returned unexpectedly!\n");
 }

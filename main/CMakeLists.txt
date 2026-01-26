@@ -1,4 +1,4 @@
-idf_component_register(SRCS "main.cpp" "tca8418.c" "libc_wrap.c" ${DOOM_SRCS}
+idf_component_register(SRCS "main.cpp" "tca8418.c" "libc_wrap.c" "rgb_led.c" "i_net_serial.c" ${DOOM_SRCS}
                     INCLUDE_DIRS ".")
 
 
