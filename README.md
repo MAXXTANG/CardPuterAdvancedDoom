@@ -1,79 +1,114 @@
-# Doom!
-This is Doom for M5 Cardputer
+# CardPuter ADV — Doom
 
-Cardputer does not have PSRAM, so things get tricky
+Doom running on the **M5Stack CardPuter ADV** (ESP32-S3).
 
-Is mostly a port of [prBoom Port to GBA](https://github.com/doomhack/GBADoom) by doomhack
+Port of [prBoom for GBA](https://github.com/doomhack/GBADoom) by doomhack, adapted for CardPuter ADV by [zspuspoki](https://github.com/zspuspoki/CardPuterAdvancedDoom), originally based on [romalik/m5cardputer_doom](https://github.com/romalik/m5cardputer_doom).
 
-HAL was taken from [M5 Official User Demo](https://github.com/m5stack/M5Cardputer-UserDemo)
+---
 
-Some parts collected from [Retro-Go](https://github.com/ducalex/retro-go) project
+## Hardware
 
-Can work with original WADs after their conversion with GbaWadUtil, also lended from doomhack.
+| Component | Detail |
+|-----------|--------|
+| MCU | ESP32-S3, 240 MHz, 8 MB flash |
+| Keyboard | TCA8418 I2C controller |
+| Audio | ES8311 codec (SFX + music) |
+| Display | ST7789 135×240 LCD |
 
-WAD is compiled into binary itself
+---
 
-Built against
-[ESP-IDF v4.4.6](https://docs.espressif.com/projects/esp-idf/en/v4.4.6/esp32/index.html)
+## Flashing (pre-built binary)
 
-Save-load works with SD card
+The app embeds the full Doom IWAD (~4.7 MB) and requires a **custom 6 MB partition table**. Flashing only the app binary (e.g. via M5Burner) will result in a black screen. You must flash `partition-table.bin` and `cardputer_doom.bin` together.
 
-Save-load crashes without SD card
-
-Sometimes crashes randomly
-
-#### Controls
- - Forward: ;
- - Backward: .
- - Left: l
- - Right: '
- - Fire: opt
- - Strafe left: ctrl
- - Strafe right: alt
- - Use: fn
- - Map: tab
- - Weapon: 1-7
-
-#### Cheats
- - iddqd - god mode
- - idkfa - keys, weapons, armor
- - idc<x><y> - jump to level E<x>M<x> (eg. idc14 jumps to E1M4)
-   
-#### Done
- - User input
- - Sounds (SFX)
- - Music
- - Save & Load
- - Optimize user input
- - Cheats!
-
-#### To do
- - Load WAD from SD card (somehow, mmap?)
- - Fix minor music issues
-
-#### Build
+### Step 1 — Install esptool
 
 ```bash
-git clone https://github.com/romalik/m5cardputer_doom
+pip install esptool
 ```
+
+### Step 2 — Download binaries
+
+Download from [Releases](../../releases):
+- `partition-table.bin`
+- `cardputer_doom.bin`
+
+### Step 3 — Enter Download Mode
+
+- Power switch on the side → **OFF**
+- Hold the **G0** key
+- Switch power → **ON**, then release G0
+
+### Step 4 — Flash
+
+**macOS / Linux:**
 ```bash
+esptool.py --chip esp32s3 --port /dev/cu.usbmodem1101 --baud 921600 write_flash \
+  0x8000 partition-table.bin \
+  0x10000 cardputer_doom.bin
+```
+
+**Windows:**
+```bash
+esptool.py --chip esp32s3 --port COM3 --baud 921600 write_flash ^
+  0x8000 partition-table.bin ^
+  0x10000 cardputer_doom.bin
+```
+
+Replace the port with your actual device (`ls /dev/cu.*` on macOS, Device Manager on Windows).
+
+---
+
+## Building from source
+
+Requires [ESP-IDF v5.5.1](https://docs.espressif.com/projects/esp-idf/en/v5.5.1/esp32s3/index.html).
+
+```bash
+git clone --recursive https://github.com/MAXXTANG/CardPuterAdvancedDoom
+idf.py set-target esp32s3
 idf.py build
+idf.py -p /dev/cu.usbmodem1101 flash
 ```
+
+To create a merged binary (flash at 0x0):
 ```bash
-idf.py flash -p /dev/ttyACM0
+bash merge_firmware.sh
+esptool.py --chip esp32s3 --port /dev/cu.usbmodem1101 write_flash 0x0 build/merged-flash.bin
 ```
 
+---
 
-#### Wad Util
+## Controls
 
-```bash
-mkdir build
-cd build
-qmake ../GbaWadUtil.pro
-make
-cd ..
- # place doom1.wad file somewhere near here
- # gbadoom.wad is needed to cover missing assets
-./build/GbaWadUtil -in doom1.wad -out gdoom1.wad -cfile doom1.c -pwad ./gbadoom.wad
- # place doom1.c to main/doom/source/iwad/ and recompile the firmware
-```
+| Key | Action |
+|-----|--------|
+| `;` | Forward |
+| `.` | Backward |
+| `l` | Turn right |
+| `'` | Turn left |
+| `opt` | Fire |
+| `ctrl` | Strafe left |
+| `alt` | Strafe right |
+| `fn` | Use / open |
+| `tab` | Map |
+| `1`–`7` | Weapon select |
+
+## Cheats
+
+| Code | Effect |
+|------|--------|
+| `iddqd` | God mode |
+| `idkfa` | All keys, weapons, armor |
+| `idc<x><y>` | Jump to level (e.g. `idc14` → E1M4) |
+
+---
+
+## Status
+
+- [x] Keyboard input (TCA8418)
+- [x] Sound effects
+- [x] Music
+- [x] Save & Load (SD card)
+- [x] Cheats
+- [ ] Load WAD from SD card
+- [ ] Fix minor music issues
