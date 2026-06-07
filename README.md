@@ -1,6 +1,10 @@
 # CardPuter ADV — Doom
 
+![Banner](banner.png)
+
 Doom running on the **M5Stack CardPuter ADV** (ESP32-S3).
+
+![Demo](demo.png)
 
 Port of [prBoom for GBA](https://github.com/doomhack/GBADoom) by doomhack, adapted for CardPuter ADV by [zspuspoki](https://github.com/zspuspoki/CardPuterAdvancedDoom), originally based on [romalik/m5cardputer_doom](https://github.com/romalik/m5cardputer_doom).
 
